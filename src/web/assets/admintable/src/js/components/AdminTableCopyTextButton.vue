@@ -3,25 +3,27 @@
 </template>
 
 <script>
-    /* global Craft */
-    /* global $ */
+  /* global Craft */
+  /* global $ */
 
-    export default {
-        name: 'AdminTableCopyTextButton',
+  export default {
+    name: 'AdminTableCopyTextButton',
 
-        props: {
-            value: String,
-        },
+    props: {
+      value: String,
+    },
 
-        mounted() {
-          $(this.$el).html(Craft.ui.createCopyTextBtn({
+    mounted() {
+      if (this.value) {
+        $(this.$el).html(
+          Craft.ui.createCopyTextBtn({
             value: this.value,
-            class: 'code small light copytextbtn-expand-r',
-          }));
-        }
-    }
+            class: 'code small light',
+          })
+        );
+      }
+    },
+  };
 </script>
 
-<style scoped>
-
-</style>
+<style scoped></style>
