@@ -9,6 +9,7 @@ namespace craft\services;
 
 use Craft;
 use craft\base\ElementInterface;
+use craft\base\Field;
 use craft\db\Query;
 use craft\db\Table;
 use craft\elements\db\MatrixBlockQuery;
@@ -25,8 +26,10 @@ use craft\models\FieldLayout;
 use craft\models\MatrixBlockType;
 use craft\models\Site;
 use craft\records\MatrixBlockType as MatrixBlockTypeRecord;
+use craft\validators\StringValidator;
 use craft\web\assets\matrix\MatrixAsset;
 use craft\web\View;
+use Illuminate\Support\Collection;
 use Throwable;
 use yii\base\Component;
 use yii\base\Exception;
@@ -185,6 +188,22 @@ class Matrix extends Component
                     $field->addError('handle', $error);
                 } else {
                     $this->_uniqueBlockTypeAndFieldHandles[] = $blockTypeAndFieldHandle;
+                }
+
+                if (!$field->hasErrors('handle')) {
+                    // Make sure the handle isn't too long when including the block type handle as individual fields
+                    // don't account for it.
+                    $maxHandleLength = Craft::$app->getDb()->getSchema()->maxObjectNameLength;
+                    $maxHandleLength -= strlen(Craft::$app->getContent()->fieldColumnPrefix . '_');
+                    $maxHandleLength -= strlen($blockType->handle . '_');
+                    $maxHandleLength -= strlen('_' . $field->columnSuffix);
+
+                    $validator = new StringValidator([
+                        'max' => $maxHandleLength,
+                    ]);
+
+                    /** @var Field $field */
+                    $validator->validateAttribute($field, 'handle');
                 }
             }
 
@@ -665,14 +684,22 @@ class Matrix extends Component
     public function saveField(MatrixField $field, ElementInterface $owner): void
     {
         $elementsService = Craft::$app->getElements();
-        /** @var MatrixBlockQuery $query */
-        $query = $owner->getFieldValue($field->handle);
-        if (($blocks = $query->getCachedResult()) !== null) {
-            $saveAll = false;
-        } else {
-            $blocks = (clone $query)->status(null)->all();
+
+        /** @var MatrixBlockQuery|Collection $value */
+        $value = $owner->getFieldValue($field->handle);
+        if ($value instanceof Collection) {
+            $blocks = $value->all();
             $saveAll = true;
+        } else {
+            $blocks = $value->getCachedResult();
+            if ($blocks !== null) {
+                $saveAll = false;
+            } else {
+                $blocks = (clone $value)->status(null)->all();
+                $saveAll = true;
+            }
         }
+
         $blockIds = [];
         $collapsedBlockIds = [];
         $sortOrder = 0;
@@ -750,9 +777,11 @@ class Matrix extends Component
                     // Duplicate Matrix blocks, ensuring we don't process the same blocks more than once
                     $handledSiteIds = [];
 
-                    $cachedQuery = (clone $query)->status(null);
-                    $cachedQuery->setCachedResult($blocks);
-                    $owner->setFieldValue($field->handle, $cachedQuery);
+                    if ($value instanceof MatrixBlockQuery) {
+                        $cachedQuery = (clone $value)->status(null);
+                        $cachedQuery->setCachedResult($blocks);
+                        $owner->setFieldValue($field->handle, $cachedQuery);
+                    }
 
                     foreach ($localizedOwners as $localizedOwner) {
                         // Make sure we haven't already duplicated blocks for this site, via propagation from another site
@@ -779,14 +808,18 @@ class Matrix extends Component
                             // Just resave Matrix blocks for that one site, and let them propagate over to the new site(s) from there
                             $this->saveField($field, $preexistingLocalizedOwner);
                         } else {
-                            $this->duplicateBlocks($field, $owner, $localizedOwner);
+                            // Duplicate the blocks, but **don't track** the duplications, so the edit page doesn’t think
+                            // its blocks have been replaced by the other sites’ blocks
+                            $this->duplicateBlocks($field, $owner, $localizedOwner, trackDuplications: false, force: true);
                         }
 
                         // Make sure we don't duplicate blocks for any of the sites that were just propagated to
                         $handledSiteIds = array_merge($handledSiteIds, array_flip($sourceSupportedSiteIds));
                     }
 
-                    $owner->setFieldValue($field->handle, $query);
+                    if ($value instanceof MatrixBlockQuery) {
+                        $owner->setFieldValue($field->handle, $value);
+                    }
                 }
             }
 
@@ -814,17 +847,30 @@ class Matrix extends Component
      * @param ElementInterface $target The target element blocks should be duplicated to
      * @param bool $checkOtherSites Whether to duplicate blocks for the source element’s other supported sites
      * @param bool $deleteOtherBlocks Whether to delete any blocks that belong to the element, which weren’t included in the duplication
+     * @param bool $trackDuplications whether to keep track of the duplications from [[\craft\services\Elements::$duplicatedElementIds]]
+     * and [[\craft\services\Elements::$duplicatedElementSourceIds]]
+     * @param bool $force Whether to force duplication, even if it looks like only the block ownership was duplicated
      * @throws Throwable if reasons
      * @since 3.2.0
      */
-    public function duplicateBlocks(MatrixField $field, ElementInterface $source, ElementInterface $target, bool $checkOtherSites = false, bool $deleteOtherBlocks = true): void
-    {
+    public function duplicateBlocks(
+        MatrixField $field,
+        ElementInterface $source,
+        ElementInterface $target,
+        bool $checkOtherSites = false,
+        bool $deleteOtherBlocks = true,
+        bool $trackDuplications = true,
+        bool $force = false,
+    ): void {
         $elementsService = Craft::$app->getElements();
-        /** @var MatrixBlockQuery $query */
-        $query = $source->getFieldValue($field->handle);
-        if (($blocks = $query->getCachedResult()) === null) {
-            $blocks = (clone $query)->status(null)->all();
+        /** @var MatrixBlockQuery|Collection $value */
+        $value = $source->getFieldValue($field->handle);
+        if ($value instanceof Collection) {
+            $blocks = $value->all();
+        } else {
+            $blocks = $value->getCachedResult() ?? (clone $value)->status(null)->all();
         }
+
         $newBlockIds = [];
 
         $transaction = Craft::$app->getDb()->beginTransaction();
@@ -844,20 +890,20 @@ class Matrix extends Component
                     if (
                         ElementHelper::isRevision($source) ||
                         !empty($target->newSiteIds) ||
-                        $source->isFieldModified($field->handle, true)
+                        (!$source::trackChanges() || $source->isFieldModified($field->handle, true))
                     ) {
                         $newBlockId = $elementsService->updateCanonicalElement($block, $newAttributes)->id;
                     } else {
                         $newBlockId = $block->getCanonicalId();
                     }
-                } elseif ($block->primaryOwnerId === $target->id) {
+                } elseif (!$force && $block->primaryOwnerId === $target->id) {
                     // Only the block ownership was duplicated, so just update its sort order for the target element
                     Db::update(Table::MATRIXBLOCKS_OWNERS, [
                         'sortOrder' => $block->sortOrder,
                     ], ['blockId' => $block->id, 'ownerId' => $target->id], updateTimestamp: false);
                     $newBlockId = $block->id;
                 } else {
-                    $newBlockId = $elementsService->duplicateElement($block, $newAttributes)->id;
+                    $newBlockId = $elementsService->duplicateElement($block, $newAttributes, trackDuplication: $trackDuplications)->id;
                 }
 
                 $newBlockIds[] = $newBlockId;
@@ -968,11 +1014,15 @@ SQL
      */
     public function createRevisionBlocks(MatrixField $field, ElementInterface $canonical, ElementInterface $revision): void
     {
+        // Only fetch blocks in the sites the owner element supports
+        $siteIds = ArrayHelper::getColumn(ElementHelper::supportedSitesForElement($canonical), 'siteId');
+
         /** @var MatrixBlock[] $blocks */
         $blocks = MatrixBlock::find()
             ->ownerId($canonical->id)
             ->fieldId($field->id)
-            ->siteId('*')
+            ->siteId($siteIds)
+            ->preferSites([$canonical->siteId])
             ->unique()
             ->status(null)
             ->all();

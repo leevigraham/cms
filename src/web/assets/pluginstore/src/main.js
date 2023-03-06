@@ -94,19 +94,43 @@ Garnish.$doc.ready(function () {
       /**
        * Displays a notice.
        *
-       * @param message
+       * @param {string} message
+       * @param {Object} [settings]
+       * @param {string} [settings.icon] The icon to show on the notification
+       * @param {string} [settings.iconLabel] The icon’s ARIA label
+       * @param {string} [settings.details] Any additional HTML that should be included below the message
+       * @return {Object} The notification
        */
-      displayNotice(message) {
-        Craft.cp.displayNotice(message);
+      displayNotice(message, settings) {
+        Craft.cp.displayNotice(message, settings);
+      },
+
+      /**
+       * Displays a success message.
+       *
+       * @param {string} message
+       * @param {Object} [settings]
+       * @param {string} [settings.icon] The icon to show on the notification
+       * @param {string} [settings.iconLabel] The icon’s ARIA label
+       * @param {string} [settings.details] Any additional HTML that should be included below the message
+       * @return {Object} The notification
+       */
+      displaySuccess(message, settings) {
+        Craft.cp.displaySuccess(message, settings);
       },
 
       /**
        * Displays an error.
        *
-       * @param message
+       * @param {string} message
+       * @param {Object} [settings]
+       * @param {string} [settings.icon] The icon to show on the notification
+       * @param {string} [settings.iconLabel] The icon’s ARIA label
+       * @param {string} [settings.details] Any additional HTML that should be included below the message
+       * @return {Object} The notification
        */
-      displayError(message) {
-        Craft.cp.displayError(message);
+      displayError(message, settings) {
+        Craft.cp.displayError(message, settings);
       },
 
       /**
@@ -128,7 +152,7 @@ Garnish.$doc.ready(function () {
       },
 
       /**
-       * Updates Craft ID.
+       * Updates Craft Console.
        *
        * @param craftIdJson
        */
@@ -136,7 +160,7 @@ Garnish.$doc.ready(function () {
         this.$store.commit('craft/updateCraftId', craftId);
 
         if (this.craftId && this.craftId.email !== this.cart.email) {
-          // Update the cart’s email with the one from the Craft ID account
+          // Update the cart’s email with the one from the Craft Console account
           let data = {
             email: this.craftId.email,
           };
@@ -231,7 +255,7 @@ Garnish.$doc.ready(function () {
           $pluginStoreActionsSpinner.addClass('hidden');
         });
 
-        // Craft ID
+        // Craft Console
         const $craftId = $('#craftid-account');
         const $craftIdConnectForm = $('#craftid-connect-form');
         const $craftIdDisconnectForm = $('#craftid-disconnect-form');

@@ -81,8 +81,14 @@ class DbHelperTest extends TestCase
      * @param bool $caseInsensitive
      * @param string|null $columnType
      */
-    public function testParseParam(string|array $expected, string $column, mixed $value, string $defaultOperator = '=', bool $caseInsensitive = false, ?string $columnType = null): void
-    {
+    public function testParseParam(
+        string|array $expected,
+        string $column,
+        mixed $value,
+        string $defaultOperator = '=',
+        bool $caseInsensitive = false,
+        ?string $columnType = null,
+    ): void {
         self::assertSame($expected, Db::parseParam($column, $value, $defaultOperator, $caseInsensitive, $columnType));
     }
 
@@ -104,6 +110,14 @@ class DbHelperTest extends TestCase
     public function testEscapeCommas(string $expected, string $value): void
     {
         self::assertSame($expected, Db::escapeCommas($value));
+    }
+
+    /**
+     * @dataProvider escapeForLikeDataProvider
+     */
+    public function testEscapeForLike(string $expected, string $value): void
+    {
+        self::assertSame($expected, Db::escapeForLike($value));
     }
 
     /**
@@ -361,27 +375,36 @@ class DbHelperTest extends TestCase
         return [
             'basic' => [
                 ['foo' => 'bar'],
-                'foo', 'bar',
+                'foo',
+                'bar',
             ],
             'multi-array-format' => [
                 self::MULTI_PARSEPARAM,
-                'foo', ['field_1', 'field_2'],
+                'foo',
+                ['field_1', 'field_2'],
             ],
             'multi-split-by-comma' => [
                 self::MULTI_PARSEPARAM,
-                'foo', 'field_1, field_2',
+                'foo',
+                'field_1, field_2',
             ],
             'multi-not-param' => [
                 self::MULTI_PARSEPARAM_NOT,
-                'foo', 'field_1, field_2', 'not',
+                'foo',
+                'field_1, field_2',
+                'not',
             ],
             'multi-not-symbol' => [
                 self::MULTI_PARSEPARAM_NOT,
-                'foo', 'field_1, field_2', '!=',
+                'foo',
+                'field_1, field_2',
+                '!=',
             ],
             'random-symbol' => [
                 ['raaa', 'foo', 'field_1'],
-                'foo', 'field_1', 'raaa',
+                'foo',
+                'field_1',
+                'raaa',
             ],
             'random-symbol-multi' => [
                 [
@@ -389,32 +412,68 @@ class DbHelperTest extends TestCase
                     ['raaa', 'foo', 'field_1'],
                     ['raaa', 'foo', 'field_2'],
                 ],
-                'foo', 'field_1, field_2', 'raaa',
+                'foo',
+                'field_1, field_2',
+                'raaa',
             ],
-            ['', 'foo', 'not'],
-            ['', 'foo', []],
-            ['', '', ''],
-            ['', 'foo', null],
-            ['', 'foo', ''],
+            [
+                '',
+                'foo',
+                'not',
+            ],
+            [
+                '',
+                'foo',
+                [],
+            ],
+            [
+                '',
+                '',
+                '',
+            ],
+            [
+                '',
+                'foo',
+                null,
+            ],
+            [
+                '',
+                'foo',
+                '',
+            ],
             [
                 ['foo' => ['field_1', 'field_2']],
-                'foo', ['or', 'field_1', 'field_2'],
+                'foo',
+                ['or', 'field_1', 'field_2'],
             ],
             [
                 ['not', ['foo' => ['field_1', 'field_2']]],
-                'foo', ['not', 'field_1', 'field_2'],
+                'foo',
+                ['not', 'field_1', 'field_2'],
             ],
             [
                 ['foo' => true],
-                'foo', true, '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                true,
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => true],
-                'foo', 1, '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                1,
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => true],
-                'foo', '1', '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                '1',
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => true],
@@ -422,27 +481,51 @@ class DbHelperTest extends TestCase
             ],
             [
                 ['foo' => true],
-                'foo', 'not :empty:', '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                'not :empty:',
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => false],
-                'foo', false, '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                false,
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => false],
-                'foo', 0, '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                0,
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => false],
-                'foo', '0', '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                '0',
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => false],
-                'foo', 'not 1', '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                'not 1',
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
             [
                 ['foo' => false],
-                'foo', ':empty:', '=', false, Schema::TYPE_BOOLEAN,
+                'foo',
+                ':empty:',
+                '=',
+                false,
+                Schema::TYPE_BOOLEAN,
             ],
         ];
     }
@@ -469,6 +552,18 @@ class DbHelperTest extends TestCase
             ['foo\, bar', 'foo, bar'],
             ['foo\, bar*', 'foo, bar*'],
             ['foo\, bar', 'foo\, bar'],
+        ];
+    }
+
+    /**
+     * @return array
+     */
+    public function escapeForLikeDataProvider(): array
+    {
+        return [
+            ['\\_foo', '_foo'],
+            ['foo\\_bar', 'foo_bar'],
+            ['foo\\_', 'foo_'],
         ];
     }
 

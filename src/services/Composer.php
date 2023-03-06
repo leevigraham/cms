@@ -20,7 +20,6 @@ use Composer\Util\Platform;
 use Craft;
 use craft\composer\Factory;
 use craft\helpers\App;
-use craft\helpers\ArrayHelper;
 use craft\helpers\FileHelper;
 use craft\helpers\Json;
 use Seld\JsonLint\DuplicateKeyException;
@@ -74,9 +73,16 @@ class Composer extends Component
      */
     public function getJsonPath(): string
     {
-        $jsonPath = defined('CRAFT_COMPOSER_PATH') ? CRAFT_COMPOSER_PATH : Craft::getAlias('@root/composer.json');
+        if (defined('CRAFT_COMPOSER_PATH')) {
+            if (!is_file(CRAFT_COMPOSER_PATH)) {
+                throw new Exception(sprintf('No Composer config found at CRAFT_COMPOSER_PATH (%s).', CRAFT_COMPOSER_PATH));
+            }
+            return CRAFT_COMPOSER_PATH;
+        }
+
+        $jsonPath = Craft::getAlias('@root/composer.json');
         if (!is_file($jsonPath)) {
-            throw new Exception('Could not locate your composer.json file.');
+            throw new Exception("No Composer config found at $jsonPath.");
         }
         return $jsonPath;
     }
@@ -327,18 +333,51 @@ class Composer extends Component
     {
         $json = new JsonFile($jsonPath);
         $config = $json->read();
+        $allowPlugins = $config['config']['allow-plugins'] ?? [];
 
-        if (($config['config']['allow-plugins'] ?? null) === true) {
+        if ($allowPlugins === true) {
             return;
         }
 
-        $config = ArrayHelper::merge($config, [
-            'config' => [
-                'allow-plugins' => [
-                    'craftcms/plugin-installer' => true,
-                ],
-            ],
-        ]);
+        $plugins = [
+            'craftcms/plugin-installer',
+            'yiisoft/yii2-composer',
+        ];
+
+        // See if everything is already in place
+        $hasAllPlugins = true;
+        foreach ($plugins as $plugin) {
+            if (($allowPlugins[$plugin] ?? false) !== true) {
+                $hasAllPlugins = false;
+                break;
+            }
+        }
+        if ($hasAllPlugins) {
+            return;
+        }
+
+        // First try using JsonManipulator
+        $success = true;
+        $manipulator = new JsonManipulator(file_get_contents($jsonPath));
+
+        foreach ($plugins as $plugin) {
+            if (($allowPlugins[$plugin] ?? false) !== true) {
+                $success = $manipulator->addConfigSetting("allow-plugins.$plugin", true);
+                if (!$success) {
+                    break;
+                }
+            }
+        }
+
+        if ($success) {
+            file_put_contents($jsonPath, $manipulator->getContents());
+            return;
+        }
+
+        // There was a problem so do it manually instead
+        foreach ($plugins as $plugin) {
+            $config['config']['allow-plugins'][$plugin] = true;
+        }
 
         $json->write($config);
     }
@@ -485,7 +524,8 @@ class Composer extends Component
     protected function createComposer(IOInterface $io, string $jsonPath, bool $prepForUpdate = true): \Composer\Composer
     {
         $config = $this->composerConfig($io, $jsonPath, $prepForUpdate);
-        $composer = Factory::create($io, $config);
+        // Bypass Factory::create()'s insistence on setting $disablePlugins to 'local'
+        $composer = (new Factory())->createComposer($io, $config);
         $lockFile = pathinfo($jsonPath, PATHINFO_EXTENSION) === 'json'
             ? substr($jsonPath, 0, -4) . 'lock'
             : $jsonPath . '.lock';

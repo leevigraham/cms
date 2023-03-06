@@ -14,6 +14,7 @@ use craft\base\PreviewableFieldInterface;
 use craft\base\SortableFieldInterface;
 use craft\elements\db\ElementQuery;
 use craft\elements\db\ElementQueryInterface;
+use craft\fields\conditions\NumberFieldConditionRule;
 use craft\gql\types\Money as MoneyType;
 use craft\helpers\Db;
 use craft\helpers\ElementHelper;
@@ -51,7 +52,7 @@ class Money extends Field implements PreviewableFieldInterface, SortableFieldInt
      */
     public static function valueType(): string
     {
-        return MoneyLibrary::class;
+        return sprintf('\\%s', MoneyLibrary::class);
     }
 
     /**
@@ -142,7 +143,7 @@ class Money extends Field implements PreviewableFieldInterface, SortableFieldInt
             }
         }
 
-        return Craft::$app->getView()->renderTemplate('_components/fieldtypes/Money/settings', [
+        return Craft::$app->getView()->renderTemplate('_components/fieldtypes/Money/settings.twig', [
             'field' => $this,
             'currencies' => $this->_isoCurrencies,
             'subUnits' => $this->_isoCurrencies->subunitFor(new Currency($this->currency)),
@@ -247,35 +248,6 @@ class Money extends Field implements PreviewableFieldInterface, SortableFieldInt
             ]);
         }
 
-        $id = $this->getInputId();
-        $namespacedId = $view->namespaceInputId($id);
-
-        $js = <<<JS
-(function() {
-    \$('#$namespacedId').on('keydown', ev => {
-        if (
-            !Garnish.isCtrlKeyPressed(ev) &&
-            ![
-                9, // tab,
-                13, // return / enter
-                27, // esc
-                8, 46, // backspace, delete
-                37, 38, 39, 40, // arrows
-                173, 189, 109, // minus, subtract
-                190, 110, // period, decimal
-                188, // comma
-                48, 49, 50, 51, 52, 53, 54, 55, 56, 57, // 0-9
-                96, 97, 98, 99, 100, 101, 102, 103, 104, 105, // numpad 0-9
-            ].includes(ev.which)
-        ) {
-            ev.preventDefault();
-        }
-    });
-})();
-JS;
-
-        $view->registerJs($js);
-
         $decimals = null;
 
         if ($value instanceof MoneyLibrary) {
@@ -297,8 +269,8 @@ JS;
             'currencySymbol' => Craft::$app->getFormattingLocale()->getCurrencySymbol($this->currency),
         ]);
 
-        return $view->renderTemplate('_components/fieldtypes/Money/input', [
-            'id' => $id,
+        return $view->renderTemplate('_components/fieldtypes/Money/input.twig', [
+            'id' => $this->getInputId(),
             'currency' => $this->currency,
             'currencyLabel' => $currencyLabel,
             'showCurrency' => $this->showCurrency,
@@ -325,7 +297,7 @@ JS;
      */
     public function getElementConditionRuleType(): array|string|null
     {
-        return null;
+        return NumberFieldConditionRule::class;
     }
 
     /**

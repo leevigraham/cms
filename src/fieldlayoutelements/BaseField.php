@@ -199,7 +199,7 @@ abstract class BaseField extends FieldLayoutElement
      */
     protected function settingsHtml(): ?string
     {
-        return Craft::$app->getView()->renderTemplate('_includes/forms/fld/field-settings', [
+        return Craft::$app->getView()->renderTemplate('_includes/forms/fld/field-settings.twig', [
             'field' => $this,
             'defaultLabel' => $this->defaultLabel(),
             'defaultInstructions' => $this->defaultInstructions(),
@@ -219,10 +219,14 @@ abstract class BaseField extends FieldLayoutElement
 
         $statusClass = $this->statusClass($element, $static);
         $label = $this->showLabel() ? $this->label() : null;
+        $instructions = $this->instructions($element, $static);
+        $tip = $this->tip($element, $static);
+        $warning = $this->warning($element, $static);
 
         return Cp::fieldHtml($inputHtml, [
             'fieldset' => $this->useFieldset(),
             'id' => $this->id(),
+            'labelId' => $this->labelId(),
             'instructionsId' => $this->instructionsId(),
             'tipId' => $this->tipId(),
             'warningId' => $this->warningId(),
@@ -235,9 +239,9 @@ abstract class BaseField extends FieldLayoutElement
             'label' => $label !== null ? Html::encode($label) : null,
             'attribute' => $this->attribute(),
             'required' => !$static && $this->required,
-            'instructions' => $this->instructions($element, $static),
-            'tip' => $this->tip($element, $static),
-            'warning' => $this->warning($element, $static),
+            'instructions' => $instructions !== null ? Html::encode($instructions) : null,
+            'tip' => $tip !== null ? Html::encode($tip) : null,
+            'warning' => $warning !== null ? Html::encode($warning) : null,
             'orientation' => $this->orientation($element, $static),
             'translatable' => $this->translatable($element, $static),
             'translationDescription' => $this->translationDescription($element, $static),
@@ -278,6 +282,17 @@ abstract class BaseField extends FieldLayoutElement
     protected function id(): string
     {
         return $this->attribute();
+    }
+
+    /**
+     * Returns the `id` of the field label.
+     *
+     * @return string
+     * @since 4.1.0
+     */
+    protected function labelId(): string
+    {
+        return sprintf('%s-label', $this->id());
     }
 
     /**
@@ -426,6 +441,9 @@ abstract class BaseField extends FieldLayoutElement
      */
     protected function statusClass(?ElementInterface $element = null, bool $static = false): ?string
     {
+        if ($element && ($status = $element->getAttributeStatus($this->attribute()))) {
+            return $status[0];
+        }
         return null;
     }
 
@@ -438,6 +456,9 @@ abstract class BaseField extends FieldLayoutElement
      */
     protected function statusLabel(?ElementInterface $element = null, bool $static = false): ?string
     {
+        if ($element && ($status = $element->getAttributeStatus($this->attribute()))) {
+            return $status[1];
+        }
         return null;
     }
 

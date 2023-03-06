@@ -599,8 +599,9 @@ class EntryQuery extends ElementQuery
      * | Value | Fetches entries…
      * | - | -
      * | `'>= 2018-04-01'` | that were posted on or after 2018-04-01.
-     * | `'< 2018-05-01'` | that were posted before 2018-05-01
+     * | `'< 2018-05-01'` | that were posted before 2018-05-01.
      * | `['and', '>= 2018-04-04', '< 2018-05-01']` | that were posted between 2018-04-01 and 2018-05-01.
+     * | `now`/`today`/`tomorrow`/`yesterday` | that were posted at midnight of the specified relative date.
      *
      * ---
      *
@@ -643,6 +644,7 @@ class EntryQuery extends ElementQuery
      * | - | -
      * | `'2018-04-01'` | that were posted before 2018-04-01.
      * | a [[\DateTime|DateTime]] object | that were posted before the date represented by the object.
+     * | `now`/`today`/`tomorrow`/`yesterday` | that were posted before midnight of specified relative date.
      *
      * ---
      *
@@ -683,6 +685,7 @@ class EntryQuery extends ElementQuery
      * | - | -
      * | `'2018-04-01'` | that were posted after 2018-04-01.
      * | a [[\DateTime|DateTime]] object | that were posted after the date represented by the object.
+     * | `now`/`today`/`tomorrow`/`yesterday` | that were posted after midnight of the specified relative date.
      *
      * ---
      *
@@ -726,6 +729,7 @@ class EntryQuery extends ElementQuery
      * | `'>= 2020-04-01'` | that will expire on or after 2020-04-01.
      * | `'< 2020-05-01'` | that will expire before 2020-05-01
      * | `['and', '>= 2020-04-04', '< 2020-05-01']` | that will expire between 2020-04-01 and 2020-05-01.
+     * | `now`/`today`/`tomorrow`/`yesterday` | that expire at midnight of the specified relative date.
      *
      * ---
      *
@@ -859,7 +863,12 @@ class EntryQuery extends ElementQuery
      */
     protected function statusCondition(string $status): mixed
     {
-        $currentTimeDb = Db::prepareDateForDb(new DateTime());
+        // Always consider “now” to be the current time @ 59 seconds into the minute.
+        // This makes entry queries more cacheable, since they only change once every minute (https://github.com/craftcms/cms/issues/5389),
+        // while not excluding any entries that may have just been published in the past minute (https://github.com/craftcms/cms/issues/7853).
+        $now = new DateTime();
+        $now->setTime((int)$now->format('H'), (int)$now->format('i'), 59);
+        $currentTimeDb = Db::prepareDateForDb($now);
 
         return match ($status) {
             Entry::STATUS_LIVE => [

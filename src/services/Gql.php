@@ -342,6 +342,12 @@ class Gql extends Component
     private array $_typeDefinitions = [];
 
     /**
+     * @var GqlToken|null
+     * @see getPublicToken()
+     */
+    private ?GqlToken $_publicToken = null;
+
+    /**
      * Returns the GraphQL schema.
      *
      * @param GqlSchema|null $schema
@@ -483,7 +489,6 @@ class Gql extends Component
                 $schema,
                 $event->query,
                 $event->rootValue,
-                $event->context,
                 $event->variables,
                 $event->operationName
             );
@@ -494,7 +499,7 @@ class Gql extends Component
                 $isIntrospectionQuery = StringHelper::containsAny($event->query, ['__schema', '__type']);
                 $schemaDef = $this->getSchemaDef($schema, $debugMode || $isIntrospectionQuery);
                 $elementsService = Craft::$app->getElements();
-                $elementsService->startCollectingCacheTags();
+                $elementsService->startCollectingCacheInfo();
 
                 $event->result = GraphQL::executeQuery(
                     $schemaDef,
@@ -509,10 +514,10 @@ class Gql extends Component
                     ->setErrorsHandler([$this, 'handleQueryErrors'])
                     ->toArray($debugMode ? DebugFlag::INCLUDE_DEBUG_MESSAGE | DebugFlag::INCLUDE_TRACE : false);
 
-                $dep = $elementsService->stopCollectingCacheTags();
+                [$dep, $duration] = $elementsService->stopCollectingCacheInfo();
 
                 if (empty($event->result['errors']) && $cacheKey) {
-                    $this->setCachedResult($cacheKey, $event->result, $dep);
+                    $this->setCachedResult($cacheKey, $event->result, $dep, $duration);
                 }
             }
         }
@@ -550,9 +555,10 @@ class Gql extends Component
      * @param string $cacheKey
      * @param array $result
      * @param TagDependency|null $dependency
+     * @param int|null $duration
      * @since 3.3.12
      */
-    public function setCachedResult(string $cacheKey, array $result, ?TagDependency $dependency = null): void
+    public function setCachedResult(string $cacheKey, array $result, ?TagDependency $dependency = null, ?int $duration = null): void
     {
         if ($dependency === null) {
             $dependency = new TagDependency();
@@ -561,7 +567,7 @@ class Gql extends Component
         // Add the global graphql cache tag
         $dependency->tags[] = self::CACHE_TAG;
 
-        Craft::$app->getCache()->set($cacheKey, $result, null, $dependency);
+        Craft::$app->getCache()->set($cacheKey, $result, $duration, $dependency);
     }
 
     /**
@@ -784,6 +790,16 @@ class Gql extends Component
      */
     public function getTokenByAccessToken(string $token): GqlToken
     {
+        if ($token === GqlToken::PUBLIC_TOKEN) {
+            $publicToken = $this->getPublicToken();
+
+            if (!$publicToken) {
+                throw new InvalidArgumentException('Invalid access token');
+            }
+
+            return $publicToken;
+        }
+
         $result = $this->_createTokenQuery()
             ->where(['accessToken' => $token])
             ->one();
@@ -803,48 +819,46 @@ class Gql extends Component
      */
     public function getPublicToken(): ?GqlToken
     {
-        $result = $this->_createTokenQuery()
-            ->where(['accessToken' => GqlToken::PUBLIC_TOKEN])
-            ->one();
+        if (!isset($this->_publicToken)) {
+            $config = Craft::$app->getProjectConfig()->get(ProjectConfig::PATH_GRAPHQL_PUBLIC_TOKEN) ?? [];
+            $this->_publicToken = $this->_createPublicToken($config);
 
-        // If we don't have it and admin changes aren't currently supported, return null
-        if (!Craft::$app->getConfig()->getGeneral()->allowAdminChanges) {
-            // Can't adjust for a missing token entirely
-            if (!$result) {
+            if ($this->_publicToken) {
+                $this->_publicToken->id = $this->_createTokenQuery()
+                    ->select(['id'])
+                    ->where(['accessToken' => GqlToken::PUBLIC_TOKEN])
+                    ->scalar();
+            }
+        }
+
+        return $this->_publicToken;
+    }
+
+    /**
+     * Creates a public token with the given config.
+     *
+     * @param array $config
+     * @return GqlToken|null
+     */
+    private function _createPublicToken(array $config): ?GqlToken
+    {
+        $schema = $this->_getPublicSchema();
+
+        if (!$schema) {
+            if (!Craft::$app->getConfig()->getGeneral()->allowAdminChanges) {
                 return null;
             }
 
-            // Existing token but missing schema link
-            if (!$result['schemaId']) {
-                $schema = $this->_getPublicSchema();
-
-                // If we actually have a public schema, re-link it and bypass project-config, since the link is not stored there.
-                if ($schema) {
-                    $token = new GqlToken($result);
-                    $token->setSchema($schema);
-                    $this->_saveTokenInternal($token);
-                    return $token;
-                }
-            }
+            $schema = $this->_createPublicSchema();
         }
 
-        // If we got here, either admin changes are allowed or the token-schema link is fine and dandy.
-        $token = $result ? new GqlToken($result) : new GqlToken([
+        return new GqlToken([
             'name' => 'Public Token',
             'accessToken' => GqlToken::PUBLIC_TOKEN,
-            'enabled' => true,
+            'schema' => $schema,
+            'enabled' => $config['enabled'] ?? false,
+            'expiryDate' => DateTimeHelper::toDateTime($config['expiryDate'] ?? false) ?: null,
         ]);
-
-        if (!$token->schemaId) {
-            $schema = $this->_getPublicSchema() ?: $this->_createPublicSchema();
-            $token->setSchema($schema);
-
-            if (!$this->saveToken($token)) {
-                throw new Exception('Couldn’t save the public token.');
-            }
-        }
-
-        return $token;
     }
 
     /**
@@ -862,21 +876,23 @@ class Gql extends Component
             return false;
         }
 
-        // Public token information is stored in the project config
-        if ($token->accessToken === GqlToken::PUBLIC_TOKEN) {
-            $data = [
-                'expiryDate' => $token->expiryDate?->getTimestamp(),
-                'enabled' => $token->enabled,
-            ];
-
-            Craft::$app->getProjectConfig()->set(ProjectConfig::PATH_GRAPHQL_PUBLIC_TOKEN, $data);
-
-            return true;
-        }
-
         if ($runValidation && !$token->validate()) {
             Craft::info('Token not saved due to validation error.', __METHOD__);
             return false;
+        }
+
+        // Public token information is stored in the project config
+        if ($token->accessToken === GqlToken::PUBLIC_TOKEN) {
+            $data = [
+                'enabled' => $token->enabled,
+                'expiryDate' => $token->expiryDate?->getTimestamp(),
+            ];
+
+            $projectConfigService = Craft::$app->getProjectConfig();
+            $muteEvents = $projectConfigService->muteEvents;
+            $projectConfigService->muteEvents = false;
+            Craft::$app->getProjectConfig()->set(ProjectConfig::PATH_GRAPHQL_PUBLIC_TOKEN, $data);
+            $projectConfigService->muteEvents = $muteEvents;
         }
 
         $this->_saveTokenInternal($token);
@@ -892,29 +908,10 @@ class Gql extends Component
      */
     public function handleChangedPublicToken(ConfigEvent $event): void
     {
-        $data = $event->newValue;
-
         // If we're just adding a public schema, ensure it makes it in.
         ProjectConfigHelper::ensureAllGqlSchemasProcessed();
 
-        try {
-            $token = $this->getTokenByAccessToken(GqlToken::PUBLIC_TOKEN);
-        } catch (InvalidArgumentException) {
-            $token = new GqlToken([
-                'name' => 'Public Token',
-                'accessToken' => GqlToken::PUBLIC_TOKEN,
-            ]);
-        }
-
-        $publicSchema = $this->_createSchemaQuery()
-            ->where(['isPublic' => true])
-            ->one();
-
-        $token->schemaId = $publicSchema ? $publicSchema['id'] : null;
-        $token->expiryDate = $data['expiryDate'] ? DateTimeHelper::toDateTime($data['expiryDate']) : null;
-        $token->enabled = $data['enabled'] ?: false;
-
-        $this->_saveTokenInternal($token);
+        $this->_publicToken = $this->_createPublicToken($event->newValue);
     }
 
     /**
@@ -1237,7 +1234,6 @@ class Gql extends Component
      * @param GqlSchema $schema
      * @param string $query
      * @param mixed $rootValue
-     * @param mixed $context
      * @param array|null $variables
      * @param string|null $operationName
      * @return string|null
@@ -1246,7 +1242,6 @@ class Gql extends Component
         GqlSchema $schema,
         string $query,
         mixed $rootValue,
-        mixed $context,
         ?array $variables = null,
         ?string $operationName = null,
     ): ?string {
@@ -1273,7 +1268,7 @@ class Gql extends Component
                 '::' . $schema->uid .
                 '::' . md5($query) .
                 '::' . serialize($rootValue) .
-                '::' . serialize($context) .
+                '::' . Craft::$app->getInfo()->configVersion .
                 '::' . serialize($variables) .
                 ($operationName ? "::$operationName" : '');
         } catch (Throwable $e) {
@@ -1468,6 +1463,10 @@ class Gql extends Component
 
         if (!empty($sortedEntryTypes)) {
             foreach (Craft::$app->getSections()->getAllSections() as $section) {
+                if (!isset($sortedEntryTypes[$section->id])) {
+                    continue;
+                }
+
                 $query = ['label' => Craft::t('app', 'Section - {section}', ['section' => Craft::t('site', $section->name)])];
                 $mutate = ['label' => Craft::t('app', 'Section - {section}', ['section' => Craft::t('site', $section->name)])];
 

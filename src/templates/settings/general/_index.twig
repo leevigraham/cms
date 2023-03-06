@@ -18,7 +18,7 @@
 
 {% macro configWarning(setting, file) -%}
     {{ "This is being overridden by the {setting} config setting."|t('app', {
-        setting: '<a href="https://craftcms.com/docs/4.x/config/config-settings.html#-'~setting|lower~'" rel="noopener" target="_blank">'~setting~'</a>'
+        setting: '<a href="https://craftcms.com/docs/4.x/config/config-settings.html#'~setting|lower~'" rel="noopener" target="_blank">'~setting~'</a>'
     })|raw }}
 {%- endmacro %}
 
@@ -80,12 +80,12 @@
         {{ forms.field({
             label: "Login Page Logo"|t('app'),
             instructions: "SVG file recommended. The logo will be displayed at {size} wide."|t('app', { size: '300px' })
-        }, include('settings/general/_images/logo')) }}
+        }, include('settings/general/_images/logo.twig')) }}
 
         {{ forms.field({
             label: "Site Icon"|t('app'),
             instructions: "Square SVG file recommended. The logo will be displayed at {size} by {size}."|t('app', { size: '32px' })
-        }, include('settings/general/_images/icon')) }}
+        }, include('settings/general/_images/icon.twig')) }}
 
         <div class="clear"></div>
     {% endif %}

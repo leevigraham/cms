@@ -8,6 +8,7 @@
 namespace craft\helpers;
 
 use Craft;
+use craft\elements\Asset;
 use craft\errors\InvalidHtmlTagException;
 use craft\image\SvgAllowedAttributes;
 use enshrined\svgSanitize\Sanitizer;
@@ -68,6 +69,18 @@ class Html extends \yii\helpers\Html
         }
 
         return $html;
+    }
+
+    /**
+     * Converts spaces into `%20` entities.
+     *
+     * @param string $str
+     * @return string
+     * @since 4.0.4
+     */
+    public static function encodeSpaces(string $str): string
+    {
+        return str_replace(' ', '%20', $str);
     }
 
     /**
@@ -777,7 +790,11 @@ class Html extends \yii\helpers\Html
             "/(?<=\\s)((for|list|xlink:href|href|aria\\-labelledby|aria\\-describedby|aria\\-controls|data\\-target|data\\-reverse\\-target|data\\-target\\-prefix)=('|\")#?)([^\.'\"]*)\\3/i",
             function(array $match) use ($namespace, $ids): string {
                 $namespacedIds = array_map(function(string $id) use ($match, $ids, $namespace): string {
-                    if (in_array($match[2], ['href', 'data-target-prefix']) || isset($ids[$id])) {
+                    if (
+                        isset($ids[$id]) ||
+                        $match[2] === 'data-target-prefix' ||
+                        ($match[2] === 'href' && str_ends_with($match[1], '#'))
+                    ) {
                         return sprintf('%s-%s', $namespace, $id);
                     }
                     return $id;
@@ -983,5 +1000,68 @@ class Html extends \yii\helpers\Html
             $return .= substr($html, $offset, $tag['end'] - $offset);
             $offset = $tag['end'];
         }
+    }
+    
+    /**
+     * Returns the contents of a given SVG file.
+     *
+     * @param string|Asset $svg An SVG asset, a file path, or raw SVG markup
+     * @param bool|null $sanitize Whether the SVG should be sanitized of potentially
+     * malicious scripts. By default the SVG will only be sanitized if an asset
+     * or markup is passed in. (File paths are assumed to be safe.)
+     * @param bool|null $namespace Whether class names and IDs within the SVG
+     * should be namespaced to avoid conflicts with other elements in the DOM.
+     * By default the SVG will only be namespaced if an asset or markup is passed in.
+     * @return string
+     */
+    public static function svg(Asset|string $svg, ?bool $sanitize = null, ?bool $namespace = null): string
+    {
+        if ($svg instanceof Asset) {
+            try {
+                $svg = $svg->getContents();
+            } catch (Throwable $e) {
+                Craft::error("Could not get the contents of {$svg->getPath()}: {$e->getMessage()}", __METHOD__);
+                Craft::$app->getErrorHandler()->logException($e);
+                return '';
+            }
+        } elseif (stripos($svg, '<svg') === false) {
+            // No <svg> tag, so it's probably a file path
+            try {
+                $svg = Craft::getAlias($svg);
+            } catch (InvalidArgumentException $e) {
+                Craft::error("Could not get the contents of $svg: {$e->getMessage()}", __METHOD__);
+                Craft::$app->getErrorHandler()->logException($e);
+                return '';
+            }
+            if (!is_file($svg) || !FileHelper::isSvg($svg)) {
+                Craft::warning("Could not get the contents of $svg: The file doesn't exist", __METHOD__);
+                return '';
+            }
+            $svg = file_get_contents($svg);
+
+            // This came from a file path, so pretty good chance that the SVG can be trusted.
+            $sanitize = $sanitize ?? false;
+            $namespace = $namespace ?? false;
+        }
+
+        // Sanitize and namespace the SVG by default
+        $sanitize = $sanitize ?? true;
+        $namespace = $namespace ?? true;
+
+        // Sanitize?
+        if ($sanitize) {
+            $svg = Html::sanitizeSvg($svg);
+        }
+
+        // Remove the XML declaration
+        $svg = preg_replace('/<\?xml.*?\?>\s*/', '', $svg);
+
+        // Namespace class names and IDs
+        if ($namespace) {
+            $ns = StringHelper::randomString(10);
+            $svg = Html::namespaceAttributes($svg, $ns, true);
+        }
+
+        return $svg;
     }
 }

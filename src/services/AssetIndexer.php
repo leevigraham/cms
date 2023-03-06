@@ -38,6 +38,7 @@ use Throwable;
 use yii\base\Component;
 use yii\base\Exception;
 use yii\base\InvalidConfigException;
+use yii\db\Exception as DbException;
 
 /**
  * Asset Indexer service.
@@ -56,20 +57,19 @@ class AssetIndexer extends Component
      * @param Volume $volume The Volume to perform indexing on.
      * @param string $directory Optional path to get index list on a subfolder.
      * @return Generator
-     * @throws FsException
      */
     public function getIndexListOnVolume(Volume $volume, string $directory = ''): Generator
     {
         try {
             $fileList = $volume->getFs()->getFileList($directory);
-        } catch (VolumeException $exception) {
+        } catch (InvalidConfigException|FsException $exception) {
             Craft::$app->getErrorHandler()->logException($exception);
             return;
         }
 
         foreach ($fileList as $listing) {
             $path = $listing->getUri();
-            $segments = explode('/', $path);
+            $segments = preg_split('/\\\\|\//', $path);
             $lastSegmentIndex = count($segments) - 1;
 
             foreach ($segments as $i => $segment) {
@@ -108,7 +108,7 @@ class AssetIndexer extends Component
      * Remove all CLI-based indexing sessions.
      *
      * @return int
-     * @throws \yii\db\Exception
+     * @throws DbException
      * @since 4.0.0
      */
     public function removeCliIndexingSessions(): int
@@ -165,13 +165,7 @@ class AssetIndexer extends Component
 
         /** @var Volume $volume */
         foreach ($volumeList as $volume) {
-            try {
-                $fileList = $volume->getFs()->getFileList();
-            } catch (FsException) {
-                Craft::warning('Unable to list files in ' . $volume->handle . '.');
-                continue;
-            }
-
+            $fileList = $this->getIndexListOnVolume($volume);
             $total += $this->storeIndexList($fileList, $session->id, (int)$volume->id);
         }
 
@@ -391,7 +385,7 @@ class AssetIndexer extends Component
         $volumeList = array_keys($volumeList);
 
         $missingFolders = (new Query())
-            ->select(['path' => 'folders.path', 'volumeName' => 'volumes.name', 'folderId' => 'folders.id'])
+            ->select(['path' => 'folders.path', 'volumeName' => 'volumes.name', 'volumeId' => 'volumes.id', 'folderId' => 'folders.id'])
             ->from(['folders' => Table::VOLUMEFOLDERS])
             ->leftJoin(['volumes' => Table::VOLUMES], '[[volumes.id]] = [[folders.volumeId]]')
             ->leftJoin(['indexData' => Table::ASSETINDEXDATA], ['and', '[[folders.id]] = [[indexData.recordId]]', ['indexData.isDir' => true]])
@@ -414,8 +408,21 @@ class AssetIndexer extends Component
             ->andWhere(['indexData.id' => null])
             ->all();
 
-        foreach ($missingFolders as ['folderId' => $folderId, 'path' => $path, 'volumeName' => $volumeName]) {
-            $missing['folders'][$folderId] = $volumeName . '/' . $path;
+        foreach ($missingFolders as ['folderId' => $folderId, 'path' => $path, 'volumeName' => $volumeName, 'volumeId' => $volumeId]) {
+            /**
+             * Check to see if the folders are actually empty
+             * @link https://github.com/craftcms/cms/issues/11949
+             */
+            $hasAssets = (new Query())
+                ->from(['a' => Table::ASSETS])
+                ->innerJoin(['f' => Table::VOLUMEFOLDERS], '[[f.id]] = [[a.folderId]]')
+                ->where(['a.volumeId' => $volumeId])
+                ->andWhere(['like', 'f.path', "$path%", false])
+                ->exists();
+
+            if (!$hasAssets) {
+                $missing['folders'][$folderId] = $volumeName . '/' . $path;
+            }
         }
 
         foreach ($missingFiles as ['assetId' => $assetId, 'path' => $path, 'volumeName' => $volumeName, 'filename' => $filename]) {
@@ -479,7 +486,7 @@ class AssetIndexer extends Component
      *
      * @param Volume $volume
      * @param string $path
-     * @param int $sessionId optional indexing session id.
+     * @param int $sessionId indexing session ID
      * @param bool $cacheImages Whether remotely-stored images should be downloaded and stored locally, to speed up transform generation.
      * @param bool $createIfMissing Whether the asset record should be created if it doesn't exist yet
      * @return Asset
@@ -490,9 +497,14 @@ class AssetIndexer extends Component
      */
     public function indexFile(Volume $volume, string $path, int $sessionId, bool $cacheImages = false, bool $createIfMissing = true): Asset
     {
+        $dirname = dirname($path);
+        if (in_array($dirname, ['.', '/', '\\'])) {
+            $dirname = '';
+        }
+
         $fs = $volume->getFs();
         $listing = new FsListing([
-            'dirname' => $path,
+            'dirname' => $dirname,
             'basename' => pathinfo($path, PATHINFO_BASENAME),
             'type' => 'file',
             'dateModified' => $fs->getDateModified($path),
@@ -518,20 +530,19 @@ class AssetIndexer extends Component
     public function indexFileByListing(int $volumeId, FsListing $listing, int $sessionId, bool $cacheImages = false, bool $createIfMissing = true): Asset
     {
         $indexEntry = new AssetIndexData([
-            'id' => null,
             'volumeId' => $volumeId,
             'sessionId' => $sessionId,
             'uri' => $listing->getUri(),
             'size' => $listing->getFileSize(),
             'timestamp' => $listing->getDateModified(),
             'isDir' => $listing->getIsDir(),
-            'recordId' => null,
             'inProgress' => true,
-            'isSkipped' => null,
-            'completed' => false,
         ]);
 
-        return $this->indexFileByEntry($indexEntry, $cacheImages, $createIfMissing);
+        $asset = $this->indexFileByEntry($indexEntry, $cacheImages, $createIfMissing);
+        $indexEntry->recordId = $asset->id;
+        $this->storeIndexEntry($indexEntry);
+        return $asset;
     }
 
     /**
@@ -547,20 +558,48 @@ class AssetIndexer extends Component
     public function indexFolderByListing(int $volumeId, FsListing $listing, int $sessionId, bool $createIfMissing = true): VolumeFolder
     {
         $indexEntry = new AssetIndexData([
-            'id' => null,
             'volumeId' => $volumeId,
             'sessionId' => $sessionId,
             'uri' => $listing->getUri(),
             'size' => $listing->getFileSize(),
             'timestamp' => $listing->getDateModified(),
             'isDir' => $listing->getIsDir(),
-            'recordId' => null,
             'inProgress' => true,
-            'isSkipped' => null,
-            'completed' => false,
         ]);
 
-        return $this->indexFolderByEntry($indexEntry, $createIfMissing);
+        $folder = $this->indexFolderByEntry($indexEntry, $createIfMissing);
+        $indexEntry->recordId = $folder->id;
+        $this->storeIndexEntry($indexEntry);
+        return $folder;
+    }
+
+    /**
+     * Store a single index entry.
+     *
+     * @param AssetIndexData $indexEntry
+     * @throws DbException
+     * @since 4.0.5
+     */
+    protected function storeIndexEntry(AssetIndexData $indexEntry)
+    {
+        $data = [
+            'sessionId' => $indexEntry->sessionId,
+            'volumeId' => $indexEntry->volumeId,
+            'uri' => $indexEntry->uri,
+            'size' => $indexEntry->size,
+            'timestamp' => Db::prepareDateForDb($indexEntry->timestamp),
+            'isDir' => $indexEntry->isDir,
+            'recordId' => $indexEntry->recordId,
+            'isSkipped' => $indexEntry->isSkipped,
+            'inProgress' => $indexEntry->inProgress,
+            'completed' => $indexEntry->completed,
+        ];
+
+        if ($indexEntry->id) {
+            $data['id'] = $indexEntry->id;
+        }
+
+        Db::insert(Table::ASSETINDEXDATA, $data);
     }
 
     /**
@@ -582,7 +621,7 @@ class AssetIndexer extends Component
         $dirname = dirname($uriPath);
 
         // Check if in a directory that cannot be indexed
-        foreach (explode('/', $dirname) as $part) {
+        foreach (preg_split('/\\\\|\//', $dirname) as $part) {
             if ($part[0] === '_') {
                 throw new AssetNotIndexableException("File “{$indexEntry->uri}” is in a directory that cannot be indexed.");
             }
@@ -726,7 +765,7 @@ class AssetIndexer extends Component
     public function indexFolderByEntry(AssetIndexData $indexEntry, bool $createIfMissing = true): VolumeFolder
     {
         if ($indexEntry->uri !== null) {
-            foreach (explode('/', $indexEntry->uri) as $part) {
+            foreach (preg_split('/\\\\|\//', $indexEntry->uri) as $part) {
                 if ($part[0] === '_') {
                     throw new AssetNotIndexableException("The directory “{$indexEntry->uri}” cannot be indexed.");
                 }

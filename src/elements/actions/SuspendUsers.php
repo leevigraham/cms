@@ -11,6 +11,7 @@ use Craft;
 use craft\base\ElementAction;
 use craft\elements\db\ElementQuery;
 use craft\elements\db\ElementQueryInterface;
+use craft\elements\db\UserQuery;
 use craft\elements\User;
 use Throwable;
 
@@ -40,7 +41,7 @@ class SuspendUsers extends ElementAction
 (() => {
     new Craft.ElementActionTrigger({
         type: $type,
-        batch: true,
+        bulk: true,
         validateSelection: \$selectedItems => {
             for (let i = 0; i < \$selectedItems.length; i++) {
                 const \$element = \$selectedItems.eq(i).find('.element');
@@ -73,10 +74,7 @@ JS;
     {
         /** @var ElementQuery $query */
         // Get the users that aren't already suspended
-        $query->status = [
-            User::STATUS_ACTIVE,
-            User::STATUS_PENDING,
-        ];
+        $query->status = UserQuery::STATUS_CREDENTIALED;
 
         /** @var User[] $users */
         $users = $query->all();

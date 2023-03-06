@@ -2,12 +2,15 @@
 @import '@craftcms/sass/mixins';
 
 div.user-photo {
-  height: 100px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 
 div.user-photo #current-photo {
   position: relative;
-  @include floatleft;
+  width: 100px;
+  height: 100px;
 }
 
 div.user-photo #current-photo:after {
@@ -31,8 +34,9 @@ div.user-photo #current-photo img {
 }
 
 div.user-photo div.user-photo-controls {
-  @include margin-left(15px);
-  @include floatleft;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   position: relative;
 }
 

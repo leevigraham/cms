@@ -44,6 +44,7 @@ use yii\base\Component;
 use yii\base\Exception;
 use yii\base\InvalidArgumentException;
 use yii\base\InvalidConfigException;
+use yii\base\NotSupportedException;
 use yii\db\Expression;
 
 /**
@@ -89,6 +90,12 @@ class Assets extends Component
      * @var array
      */
     private array $_foldersByUid = [];
+
+    /**
+     * @var VolumeFolder[]
+     * @see getUserTemporaryUploadFolder
+     */
+    private $_userTempFolders = [];
 
     /**
      * Returns a file by its ID.
@@ -170,14 +177,22 @@ class Assets extends Component
      */
     public function moveAsset(Asset $asset, VolumeFolder $folder, string $filename = ''): bool
     {
-        $asset->newFolderId = $folder->id;
+        $folderChanging = $asset->folderId != $folder->id;
+        $filenameChanging = $filename !== '' && $filename !== $asset->getFilename();
 
-        // If the filename hasn’t changed, then we can use the `move` scenario
-        if ($filename === '' || $filename === $asset->getFilename()) {
-            $asset->setScenario(Asset::SCENARIO_MOVE);
-        } else {
+        if (!$folderChanging && !$filenameChanging) {
+            return true;
+        }
+
+        if ($folderChanging) {
+            $asset->newFolderId = $folder->id;
+        }
+
+        if ($filenameChanging) {
             $asset->newFilename = $filename;
             $asset->setScenario(Asset::SCENARIO_FILEOPS);
+        } else {
+            $asset->setScenario(Asset::SCENARIO_MOVE);
         }
 
         return Craft::$app->getElements()->saveElement($asset);
@@ -250,7 +265,7 @@ class Assets extends Component
 
         if ($conflictingFolder) {
             throw new FsObjectExistsException(Craft::t('app', 'A folder with the name “{folderName}” already exists in the folder.', [
-                'folderName' => $folder->name,
+                'folderName' => $newName,
             ]));
         }
 
@@ -340,7 +355,7 @@ class Assets extends Component
             // Add additional criteria but prevent overriding volumeId and order.
             $criteria = array_merge($additionalCriteria, [
                 'volumeId' => $volumeId,
-                'order' => [new Expression('path IS NULL DESC'), 'path' => SORT_ASC],
+                'order' => [new Expression('[[path]] IS NULL DESC'), 'path' => SORT_ASC],
             ]);
             $cacheKey = md5(Json::encode($criteria));
 
@@ -467,20 +482,28 @@ class Assets extends Component
      *
      * @param VolumeFolder $parentFolder
      * @param string $orderBy
+     * @param bool $withParent Whether the parent folder should be included in the results
      * @return VolumeFolder[]
      */
-    public function getAllDescendantFolders(VolumeFolder $parentFolder, string $orderBy = 'path'): array
+    public function getAllDescendantFolders(VolumeFolder $parentFolder, string $orderBy = 'path', bool $withParent = true): array
     {
         $query = $this->_createFolderQuery()
             ->where([
                 'and',
-                ['like', 'path', $parentFolder->path . '%', false],
                 ['volumeId' => $parentFolder->volumeId],
                 ['not', ['parentId' => null]],
             ]);
 
+        if ($parentFolder->path !== null) {
+            $query->andWhere(['like', 'path', Db::escapeForLike($parentFolder->path) . '%', false]);
+        }
+
         if ($orderBy) {
             $query->orderBy($orderBy);
+        }
+
+        if (!$withParent) {
+            $query->andWhere(['not', ['id' => $parentFolder->id]]);
         }
 
         $results = $query->all();
@@ -539,7 +562,7 @@ class Assets extends Component
      */
     public function getTotalFolders(mixed $criteria): int
     {
-        if (!($criteria instanceof FolderCriteria)) {
+        if (!$criteria instanceof FolderCriteria) {
             $criteria = new FolderCriteria($criteria);
         }
 
@@ -620,7 +643,13 @@ class Assets extends Component
             'mode' => 'crop',
         ]);
 
-        return $asset->getUrl($transform, false) ?? AssetsHelper::iconUrl($extension);
+        $url = $asset->getUrl($transform);
+
+        if ($url === null) {
+            return AssetsHelper::iconUrl($extension);
+        }
+
+        return AssetsHelper::revUrl($url, $asset, fsOnly: true);
     }
 
     /**
@@ -631,14 +660,17 @@ class Assets extends Component
      * @param int $maxHeight
      * @return string
      * @since 4.0.0
+     * @throws NotSupportedException if the asset’s volume doesn’t have a filesystem with public URLs
      */
     public function getImagePreviewUrl(Asset $asset, int $maxWidth, int $maxHeight): string
     {
+        $isWebSafe = Image::isWebSafe($asset->getExtension());
         $originalWidth = (int)$asset->getWidth();
         $originalHeight = (int)$asset->getHeight();
         [$width, $height] = AssetsHelper::scaledDimensions((int)$asset->getWidth(), (int)$asset->getHeight(), $maxWidth, $maxHeight);
 
         if (
+            !$isWebSafe ||
             !$asset->getVolume()->getFs()->hasUrls ||
             $originalWidth > $width ||
             $originalHeight > $height
@@ -652,7 +684,13 @@ class Assets extends Component
             $transform = null;
         }
 
-        return $asset->getUrl($transform, true);
+        $url = $asset->getUrl($transform, true);
+
+        if (!$url) {
+            throw new NotSupportedException('A preview URL couldn’t be generated for the asset.');
+        }
+
+        return AssetsHelper::revUrl($url, $asset, fsOnly: true);
     }
 
     /**
@@ -771,7 +809,7 @@ class Assets extends Component
 
         if ($fullPath !== '') {
             // If we don't have a folder matching these, create a new one
-            $parts = explode('/', trim($fullPath, '/'));
+            $parts = preg_split('/\\\\|\//', trim($fullPath, '/\\'));
 
             // creep up the folder path
             $path = '';
@@ -898,6 +936,12 @@ class Assets extends Component
             $user = Craft::$app->getUser()->getIdentity();
         }
 
+        $cacheKey = $user->id ?? '__GUEST__';
+
+        if (isset($this->_userTempFolders[$cacheKey])) {
+            return $this->_userTempFolders[$cacheKey];
+        }
+
         if ($user) {
             $folderName = 'user_' . $user->id;
         } elseif (Craft::$app->getRequest()->getIsConsoleRequest()) {
@@ -919,7 +963,7 @@ class Assets extends Component
 
         if ($tempVolume) {
             $path = ($tempSubpath ? "$tempSubpath/" : '') . $folderName;
-            return $this->ensureFolderByFullPathAndVolume($path, $tempVolume, false);
+            return $this->_userTempFolders[$cacheKey] = $this->ensureFolderByFullPathAndVolume($path, $tempVolume);
         }
 
         $volumeTopFolder = $this->findFolder([
@@ -954,7 +998,7 @@ class Assets extends Component
             throw new VolumeException('Unable to create directory for temporary volume.');
         }
 
-        return $folder;
+        return $this->_userTempFolders[$cacheKey] = $folder;
     }
 
     /**

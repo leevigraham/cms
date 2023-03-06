@@ -10,6 +10,7 @@ namespace craft\mail\transportadapters;
 use Craft;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
+use craft\helpers\Html;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 
 /**
@@ -106,7 +107,7 @@ class Sendmail extends BaseTransportAdapter
             ];
         }, $this->_allowedCommands());
 
-        return Craft::$app->getView()->renderTemplate('_components/mailertransportadapters/Sendmail/settings', [
+        return Craft::$app->getView()->renderTemplate('_components/mailertransportadapters/Sendmail/settings.twig', [
             'adapter' => $this,
             'commandOptions' => $commandOptions,
         ]);
@@ -118,8 +119,7 @@ class Sendmail extends BaseTransportAdapter
     public function defineTransport(): array|AbstractTransport
     {
         // Replace any spaces with `%20` according to https://symfony.com/doc/current/mailer.html#other-options
-        $command = (App::parseEnv($this->command) ?: self::DEFAULT_COMMAND);
-        $command = str_replace(' ', '%20', $command);
+        $command = Html::encodeSpaces(App::parseEnv($this->command) ?: self::DEFAULT_COMMAND);
 
         return [
             'dsn' => 'sendmail://default?command=' . $command,

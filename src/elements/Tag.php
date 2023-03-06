@@ -201,6 +201,7 @@ class Tag extends Element
             'when' => function(): bool {
                 return !$this->hasErrors('groupId') && !$this->hasErrors('title');
             },
+            'on' => [self::SCENARIO_DEFAULT, self::SCENARIO_LIVE],
         ];
         return $rules;
     }
@@ -233,7 +234,7 @@ class Tag extends Element
      * @inheritdoc
      * @since 3.5.0
      */
-    public function getCacheTags(): array
+    protected function cacheTags(): array
     {
         return [
             "group:$this->groupId",

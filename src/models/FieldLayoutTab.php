@@ -13,6 +13,7 @@ use craft\base\FieldLayoutComponent;
 use craft\base\FieldLayoutElement;
 use craft\db\Query;
 use craft\db\Table;
+use craft\errors\FieldNotFoundException;
 use craft\fieldlayoutelements\BaseField;
 use craft\fieldlayoutelements\CustomField;
 use craft\helpers\ArrayHelper;
@@ -285,7 +286,10 @@ class FieldLayoutTab extends FieldLayoutComponent
             if (is_array($layoutElement)) {
                 try {
                     $layoutElement = $fieldsService->createLayoutElement($layoutElement);
-                } catch (InvalidArgumentException $e) {
+                } catch (FieldNotFoundException) {
+                    // Skip quietly
+                    continue;
+                } catch (InvalidArgumentException|InvalidConfigException $e) {
                     Craft::warning('Invalid field layout element config: ' . $e->getMessage(), __METHOD__);
                     Craft::$app->getErrorHandler()->logException($e);
                     continue;
@@ -304,8 +308,15 @@ class FieldLayoutTab extends FieldLayoutComponent
      */
     public function getHtmlId(): string
     {
+        $asciiName = StringHelper::toKebabCase(StringHelper::toAscii($this->name, 'en'));
+
+        if ($asciiName === '') {
+            // Use md5() as a fallback
+            $asciiName = sprintf('tab-%s', md5($this->name));
+        }
+
         // Use two dashes here in case a tab name starts with “Tab”
-        return 'tab--' . StringHelper::toKebabCase($this->name);
+        return "tab--$asciiName";
     }
 
     /**

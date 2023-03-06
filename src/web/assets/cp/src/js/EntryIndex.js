@@ -80,21 +80,45 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
       // If they are, show a primary "New entry" button, and a dropdown of the other sections (if any).
       // Otherwise only show a menu button
       if (selectedSection) {
+        const visibleLabel =
+          this.settings.context === 'index'
+            ? Craft.t('app', 'New entry')
+            : Craft.t('app', 'New {section} entry', {
+                section: selectedSection.name,
+              });
+
+        const ariaLabel =
+          this.settings.context === 'index'
+            ? Craft.t('app', 'New entry in the {section} section', {
+                section: selectedSection.name,
+              })
+            : visibleLabel;
+
+        // In index contexts, the button functions as a link
+        // In non-index contexts, the button triggers a slideout editor
+        const role = this.settings.context === 'index' ? 'link' : null;
+
         this.$newEntryBtn = Craft.ui
           .createButton({
-            label:
-              this.settings.context === 'index'
-                ? Craft.t('app', 'New entry')
-                : Craft.t('app', 'New {section} entry', {
-                    section: selectedSection.name,
-                  }),
+            label: visibleLabel,
+            ariaLabel: ariaLabel,
             spinner: true,
+            role: role,
           })
           .addClass('submit add icon')
           .appendTo(this.$newEntryBtnGroup);
 
-        this.addListener(this.$newEntryBtn, 'click', () => {
-          this._createEntry(selectedSection.id);
+        this.addListener(this.$newEntryBtn, 'click mousedown', (ev) => {
+          // If this is the element index, check for Ctrl+clicks and middle button clicks
+          if (
+            this.settings.context === 'index' &&
+            ((ev.type === 'click' && Garnish.isCtrlKeyPressed(ev)) ||
+              (ev.type === 'mousedown' && ev.originalEvent.button === 1))
+          ) {
+            window.open(Craft.getUrl(`entries/${selectedSection.handle}/new`));
+          } else if (ev.type === 'click') {
+            this._createEntry(selectedSection.id);
+          }
         });
 
         if (this.publishableSections.length > 1) {
@@ -103,12 +127,14 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
             class: 'btn submit menubtn btngroup-btn-last',
             'aria-controls': menuId,
             'data-disclosure-trigger': '',
+            'aria-label': Craft.t('app', 'New entry, choose a section'),
           }).appendTo(this.$newEntryBtnGroup);
         }
       } else {
         this.$newEntryBtn = $menuBtn = Craft.ui
           .createButton({
             label: Craft.t('app', 'New entry'),
+            ariaLabel: Craft.t('app', 'New entry, choose a section'),
             spinner: true,
           })
           .addClass('submit add icon menubtn btngroup-btn-last')
@@ -127,6 +153,8 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
         const $ul = $('<ul/>').appendTo($menuContainer);
 
         for (const section of this.publishableSections) {
+          const anchorRole =
+            this.settings.context === 'index' ? 'link' : 'button';
           if (
             (this.settings.context === 'index' &&
               $.inArray(this.siteId, section.sites) !== -1) ||
@@ -134,8 +162,9 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
           ) {
             const $li = $('<li/>').appendTo($ul);
             const $a = $('<a/>', {
-              role: 'button',
-              tabindex: '0',
+              role: anchorRole === 'button' ? 'button' : null,
+              href: '#', // Allows for click listener and tab order
+              type: anchorRole === 'button' ? 'button' : null,
               text: Craft.t('app', 'New {section} entry', {
                 section: section.name,
               }),
@@ -144,6 +173,16 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
               $menuBtn.data('trigger').hide();
               this._createEntry(section.id);
             });
+
+            if (anchorRole === 'button') {
+              this.addListener($a, 'keydown', (event) => {
+                if (event.keyCode === Garnish.SPACE_KEY) {
+                  event.preventDefault();
+                  $menuBtn.data('trigger').hide();
+                  this._createEntry(section.id);
+                }
+              });
+            }
           }
         }
 
@@ -207,8 +246,7 @@ Craft.EntryIndex = Craft.BaseElementIndex.extend({
             }
 
             this.clearSearch();
-            this.setSortAttribute('dateCreated');
-            this.setSortDirection('desc');
+            this.setSelectedSortAttribute('dateCreated', 'desc');
             this.selectElementAfterUpdate(data.entry.id);
             this.updateElements();
           });

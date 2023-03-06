@@ -72,7 +72,7 @@ import './plugins.scss';
                   )
                 )
                 .append(
-                  $('<div/>', {class: 'details'})
+                  $('<div/>', {class: 'plugin-details'})
                     .append($('<h2/>', {text: info.name}))
                     .append(
                       info.description
@@ -237,7 +237,7 @@ import './plugins.scss';
     init: function (manager, $row) {
       this.manager = manager;
       this.$row = $row;
-      this.$details = this.$row.find('.details');
+      this.$details = this.$row.find('.plugin-details');
       this.$keyContainer = $row.find('.license-key');
       this.$keyInput = this.$keyContainer
         .find('input.text')
@@ -389,7 +389,7 @@ import './plugins.scss';
                 'This license is tied to another Craft install. Visit {accountLink} to detach it, or <a href="{buyUrl}">buy a new license</a>',
                 {
                   accountLink:
-                    '<a href="https://id.craftcms.com" rel="noopener" target="_blank">id.craftcms.com</a>',
+                    '<a href="https://console.craftcms.com" rel="noopener" target="_blank">console.craftcms.com</a>',
                   buyUrl: Craft.getCpUrl(
                     `plugin-store/buy/${this.handle}/${info.edition}`
                   ),

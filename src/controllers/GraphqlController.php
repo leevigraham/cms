@@ -319,7 +319,7 @@ class GraphqlController extends Controller
             $schemas[$name] = $schema->uid;
         }
 
-        return $this->renderTemplate('graphql/graphiql', [
+        return $this->renderTemplate('graphql/graphiql.twig', [
             'url' => UrlHelper::actionUrl('graphql/api'),
             'schemas' => $schemas,
             'selectedSchema' => $selectedSchema,
@@ -362,7 +362,7 @@ class GraphqlController extends Controller
         // Ensure the public schema is created.
         Craft::$app->getGql()->getPublicSchema();
 
-        return $this->renderTemplate('graphql/schemas/_index');
+        return $this->renderTemplate('graphql/schemas/_index.twig');
     }
 
     /**
@@ -419,7 +419,7 @@ class GraphqlController extends Controller
             ]);
         }
 
-        return $this->renderTemplate('graphql/tokens/_edit', compact(
+        return $this->renderTemplate('graphql/tokens/_edit.twig', compact(
             'token',
             'title',
             'accessToken',
@@ -503,7 +503,7 @@ class GraphqlController extends Controller
     public function actionViewTokens(): Response
     {
         $this->requireAdmin(false);
-        return $this->renderTemplate('graphql/tokens/_index');
+        return $this->renderTemplate('graphql/tokens/_index.twig');
     }
 
     /**
@@ -536,7 +536,7 @@ class GraphqlController extends Controller
         }
 
 
-        return $this->renderTemplate('graphql/schemas/_edit', compact(
+        return $this->renderTemplate('graphql/schemas/_edit.twig', compact(
             'schema',
             'title'
         ));
@@ -559,10 +559,10 @@ class GraphqlController extends Controller
             $schema = $gqlService->getPublicSchema();
         }
 
-        $token = $gqlService->getTokenByAccessToken(GqlToken::PUBLIC_TOKEN);
+        $token = $gqlService->getPublicToken();
         $title = Craft::t('app', 'Edit the public GraphQL schema');
 
-        return $this->renderTemplate('graphql/schemas/_edit', compact(
+        return $this->renderTemplate('graphql/schemas/_edit.twig', compact(
             'schema',
             'token',
             'title'
@@ -583,7 +583,7 @@ class GraphqlController extends Controller
 
         $gqlService = Craft::$app->getGql();
         $schema = $gqlService->getPublicSchema();
-        $schema->scope = $this->request->getBodyParam('permissions');
+        $schema->scope = $this->request->getBodyParam('permissions') ?? [];
 
         if (!$gqlService->saveSchema($schema)) {
             $this->setFailFlash(Craft::t('app', 'Couldn’t save schema.'));
@@ -596,7 +596,7 @@ class GraphqlController extends Controller
             return null;
         }
 
-        $token = $gqlService->getTokenByAccessToken(GqlToken::PUBLIC_TOKEN);
+        $token = $gqlService->getPublicToken();
         $token->enabled = (bool)$this->request->getRequiredBodyParam('enabled');
 
         if (($expiryDate = $this->request->getBodyParam('expiryDate')) !== null) {
@@ -642,7 +642,7 @@ class GraphqlController extends Controller
         }
 
         $schema->name = $this->request->getBodyParam('name') ?? $schema->name;
-        $schema->scope = $this->request->getBodyParam('permissions');
+        $schema->scope = $this->request->getBodyParam('permissions') ?? [];
 
         if (!$gqlService->saveSchema($schema)) {
             $this->setFailFlash(Craft::t('app', 'Couldn’t save schema.'));

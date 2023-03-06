@@ -225,6 +225,7 @@ abstract class Field extends SavableComponent implements FieldInterface
     public function attributeLabels(): array
     {
         return [
+            'groupId' => Craft::t('app', 'Group'),
             'handle' => Craft::t('app', 'Handle'),
             'name' => Craft::t('app', 'Name'),
         ];
@@ -253,6 +254,13 @@ abstract class Field extends SavableComponent implements FieldInterface
         $rules[] = [['handle'], 'string', 'max' => $maxHandleLength];
         $rules[] = [['name', 'handle', 'translationMethod'], 'required'];
         $rules[] = [['groupId'], 'number', 'integerOnly' => true];
+
+        $rules[] = [
+            ['groupId'],
+            'required',
+            'when' => fn() => $this->context === 'global',
+        ];
+
         $rules[] = [
             ['translationMethod'],
             'in',
@@ -264,6 +272,7 @@ abstract class Field extends SavableComponent implements FieldInterface
                 self::TRANSLATION_METHOD_CUSTOM,
             ],
         ];
+
         $rules[] = [
             ['handle'],
             HandleValidator::class,
@@ -272,30 +281,44 @@ abstract class Field extends SavableComponent implements FieldInterface
                 'archived',
                 'attributeLabel',
                 'attributes',
+                'awaitingFieldValues',
                 'behavior',
                 'behaviors',
                 'canSetProperties',
+                'canonical',
                 'children',
+                'contentId',
                 'contentTable',
                 'dateCreated',
+                'dateDeleted',
+                'dateLastMerged',
                 'dateUpdated',
                 'descendants',
+                'draftId',
+                'duplicateOf',
                 'enabled',
                 'enabledForSite',
                 'error',
-                'errors',
                 'errorSummary',
+                'errors',
+                'fieldLayoutId',
                 'fieldValue',
                 'fieldValues',
+                'firstSave',
+                'hardDelete',
                 'hasMethods',
                 'id',
+                'isNewForSite',
+                'isProvisionalDraft',
                 'language',
                 'level',
-                'localized',
                 'lft',
                 'link',
                 'localized',
+                'localized',
+                'mergingCanonicalChanges',
                 'name', // global set-specific
+                'newSiteIds',
                 'next',
                 'nextSibling',
                 'owner',
@@ -304,18 +327,29 @@ abstract class Field extends SavableComponent implements FieldInterface
                 'postDate', // entry-specific
                 'prev',
                 'prevSibling',
+                'previewing',
+                'propagateAll',
+                'propagating',
                 'ref',
+                'resaving',
+                'revisionId',
                 'rgt',
                 'root',
                 'scenario',
                 'searchScore',
                 'siblings',
                 'site',
+                'siteId',
+                'siteSettingsId',
                 'slug',
                 'sortOrder',
                 'status',
+                'structureId',
+                'tempId',
                 'title',
+                'trashed',
                 'uid',
+                'updatingFromDerivative',
                 'uri',
                 'url',
                 'username', // user-specific
@@ -427,6 +461,14 @@ abstract class Field extends SavableComponent implements FieldInterface
     public function getInputId(): string
     {
         return Html::id($this->handle);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getLabelId(): string
+    {
+        return sprintf('%s-label', $this->getInputId());
     }
 
     /**
@@ -553,9 +595,7 @@ abstract class Field extends SavableComponent implements FieldInterface
      */
     public function getTableAttributeHtml(mixed $value, ElementInterface $element): string
     {
-        $value = (string)$value;
-
-        return Html::encode(StringHelper::stripHtml($value));
+        return ElementHelper::attributeHtml($value);
     }
 
     /**
@@ -663,6 +703,10 @@ abstract class Field extends SavableComponent implements FieldInterface
      */
     public function getGroup(): ?FieldGroup
     {
+        if (!$this->groupId) {
+            return null;
+        }
+
         return Craft::$app->getFields()->getGroupById($this->groupId);
     }
 

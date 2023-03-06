@@ -276,7 +276,7 @@ class MatrixBlock extends Element implements BlockElementInterface
      * @inheritdoc
      * @since 3.5.0
      */
-    public function getCacheTags(): array
+    protected function cacheTags(): array
     {
         return [
             "field-owner:$this->fieldId-$this->primaryOwnerId",
@@ -393,7 +393,7 @@ class MatrixBlock extends Element implements BlockElementInterface
         $blockTypeHandle = $this->getType()->handle . ':' . $handle;
 
         if (isset($this->_eagerLoadedBlockTypeElements[$blockTypeHandle])) {
-            return Collection::make($this->_eagerLoadedBlockTypeElements[$blockTypeHandle]);
+            return ElementCollection::make($this->_eagerLoadedBlockTypeElements[$blockTypeHandle]);
         }
 
         return parent::getEagerLoadedElements($handle);

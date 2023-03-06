@@ -82,7 +82,7 @@ class SitesController extends Controller
             'Delete {site}',
         ]);
 
-        return $this->renderTemplate('settings/sites/index', compact(
+        return $this->renderTemplate('settings/sites/index.twig', compact(
             'crumbs',
             'allGroups',
             'group',
@@ -271,13 +271,14 @@ class SitesController extends Controller
                 'value' => $locale->id,
                 'data' => [
                     'data' => [
-                        'hint' => $locale->getLanguageID() !== $languageId ? $locale->getDisplayName() : false,
+                        'hint' => $locale->id,
+                        'keywords' => $locale->getLanguageID() !== $languageId ? $locale->getDisplayName() : false,
                     ],
                 ],
             ];
         }
 
-        return $this->renderTemplate('settings/sites/_edit', [
+        return $this->renderTemplate('settings/sites/_edit.twig', [
             'brandNewSite' => $brandNewSite,
             'title' => $title,
             'crumbs' => $crumbs,

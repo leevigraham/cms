@@ -13,7 +13,6 @@ use craft\base\NameTrait;
 use craft\db\Query;
 use craft\db\Table;
 use craft\elements\actions\DeleteUsers;
-use craft\elements\actions\Edit;
 use craft\elements\actions\Restore;
 use craft\elements\actions\SuspendUsers;
 use craft\elements\actions\UnsuspendUsers;
@@ -43,6 +42,7 @@ use craft\validators\UsernameValidator;
 use craft\validators\UserPasswordValidator;
 use DateInterval;
 use DateTime;
+use DateTimeZone;
 use Throwable;
 use yii\base\ErrorHandler;
 use yii\base\Exception;
@@ -106,9 +106,9 @@ class User extends Element implements IdentityInterface
      */
     public const STATUS_INACTIVE = 'inactive';
     public const STATUS_ACTIVE = 'active';
-    public const STATUS_LOCKED = 'locked';
-    public const STATUS_SUSPENDED = 'suspended';
     public const STATUS_PENDING = 'pending';
+    public const STATUS_SUSPENDED = 'suspended';
+    public const STATUS_LOCKED = 'locked';
 
     // Authentication error codes
     // -------------------------------------------------------------------------
@@ -268,7 +268,9 @@ class User extends Element implements IdentityInterface
             [
                 'key' => 'credentialed',
                 'label' => Craft::t('app', 'Credentialed'),
-                'criteria' => ['status' => ['active', 'pending']],
+                'criteria' => [
+                    'status' => UserQuery::STATUS_CREDENTIALED,
+                ],
                 'hasThumbs' => true,
                 'data' => [
                     'slug' => 'credentialed',
@@ -277,7 +279,9 @@ class User extends Element implements IdentityInterface
             [
                 'key' => 'inactive',
                 'label' => Craft::t('app', 'Inactive'),
-                'criteria' => ['status' => 'inactive'],
+                'criteria' => [
+                    'status' => self::STATUS_INACTIVE,
+                ],
                 'hasThumbs' => true,
                 'data' => [
                     'slug' => 'inactive',
@@ -312,13 +316,6 @@ class User extends Element implements IdentityInterface
     protected static function defineActions(string $source): array
     {
         $actions = [];
-        $elementsService = Craft::$app->getElements();
-
-        // Edit
-        $actions[] = $elementsService->createAction([
-            'type' => Edit::class,
-            'label' => Craft::t('app', 'Edit user'),
-        ]);
 
         if (Craft::$app->getUser()->checkPermission('moderateUsers')) {
             // Suspend
@@ -334,12 +331,7 @@ class User extends Element implements IdentityInterface
         }
 
         // Restore
-        $actions[] = $elementsService->createAction([
-            'type' => Restore::class,
-            'successMessage' => Craft::t('app', 'Users restored.'),
-            'partialSuccessMessage' => Craft::t('app', 'Some users restored.'),
-            'failMessage' => Craft::t('app', 'Users not restored.'),
-        ]);
+        $actions[] = Restore::class;
 
         return $actions;
     }
@@ -1228,6 +1220,12 @@ class User extends Element implements IdentityInterface
      */
     public function getStatus(): ?string
     {
+        // If they're disabled or archived, go with that
+        $status = parent::getStatus();
+        if ($status !== self::STATUS_ENABLED) {
+            return $status;
+        }
+
         if ($this->suspended) {
             return self::STATUS_SUSPENDED;
         }
@@ -1432,9 +1430,9 @@ class User extends Element implements IdentityInterface
     {
         if ($this->locked) {
             $currentTime = DateTimeHelper::currentUTCDateTime();
-            $cooldownEnd = $this->getCooldownEndTime();
+            $cooldownEnd = $this->getCooldownEndTime()?->setTimezone(new DateTimeZone('UTC'));
 
-            if ($currentTime < $cooldownEnd) {
+            if ($cooldownEnd && $currentTime < $cooldownEnd) {
                 return $currentTime->diff($cooldownEnd);
             }
         }
@@ -1615,7 +1613,7 @@ class User extends Element implements IdentityInterface
     protected function metaFieldsHtml(bool $static): string
     {
         return implode("\n", [
-            Craft::$app->getView()->renderTemplate('users/_accountfields', [
+            Craft::$app->getView()->renderTemplate('users/_accountfields.twig', [
                 'user' => $this,
                 'isNewUser' => !$this->id,
                 'static' => $static,
@@ -1624,6 +1622,17 @@ class User extends Element implements IdentityInterface
         ]);
     }
 
+    /**
+     * @inheritdoc
+     */
+    protected function statusFieldHtml(): string
+    {
+        return '';
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function metadata(): array
     {
         $formatter = Craft::$app->getFormatter();

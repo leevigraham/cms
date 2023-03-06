@@ -68,6 +68,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         title: Craft.t('app', 'Show sidebar'),
         'aria-label': Craft.t('app', 'Show sidebar'),
         'data-icon': `sidebar-${Garnish.ltr ? 'right' : 'left'}`,
+        'aria-expanded': 'false',
       }).appendTo(this.$toolbar);
 
       this.addListener(this.$sidebarBtn, 'click', (ev) => {
@@ -89,7 +90,6 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
       this.$sidebar = $('<div/>', {
         class: 'so-sidebar details hidden',
       }).appendTo(this.$body);
-      Craft.trapFocusWithin(this.$sidebar);
 
       // Footer
       this.$footer = $('<div/>', {class: 'so-footer hidden'});
@@ -168,7 +168,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
     },
 
     /**
-     * @param {object} [data={}]
+     * @param {Object} [data={}]
      * @param {boolean} [refreshInitialData=true]
      * @returns {Promise}
      */
@@ -270,13 +270,17 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
     },
 
     /**
-     * @param {object} data
-     * @return {Promise}
+     * @param {Object} data
+     * @returns {Promise}
      */
     update: function (data) {
       return new Promise((resolve) => {
         this.namespace = data.namespace;
         this.$content.html(data.content);
+
+        if (data.submitButtonLabel) {
+          this.$saveBtn.text(data.submitButtonLabel);
+        }
 
         this.updateTabs(data.tabs);
 
@@ -394,9 +398,10 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         });
       }
 
+      Craft.trapFocusWithin(this.$sidebar);
+
       this.$sidebarBtn.addClass('active').attr({
-        title: Craft.t('app', 'Hide sidebar'),
-        'aria-label': Craft.t('app', 'Hide sidebar'),
+        'aria-expanded': 'true',
       });
 
       Garnish.$win.trigger('resize');
@@ -422,11 +427,11 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         .css(this._closedSidebarStyles())
         .one('transitionend.so', () => {
           this.$sidebar.addClass('hidden');
+          this.$sidebarBtn.focus();
         });
 
       this.$sidebarBtn.removeClass('active').attr({
-        title: Craft.t('app', 'Show sidebar'),
-        'aria-label': Craft.t('app', 'Show sidebar'),
+        'aria-expanded': 'false',
       });
 
       Garnish.uiLayerManager.removeLayer();
@@ -479,8 +484,8 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
         .then((response) => {
           this.handleSubmitResponse(response);
         })
-        .catch(() => {
-          this.handleSubmitError();
+        .catch((error) => {
+          this.handleSubmitError(error);
         })
         .finally(() => {
           this.hideSubmitSpinner();
@@ -491,7 +496,7 @@ Craft.CpScreenSlideout = Craft.Slideout.extend(
       this.clearErrors();
       const data = response.data || {};
       if (data.message) {
-        Craft.cp.displayNotice(data.message);
+        Craft.cp.displaySuccess(data.message, data.notificationSettings);
       }
       this.trigger('submit', {
         response: response,

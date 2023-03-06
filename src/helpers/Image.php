@@ -11,6 +11,7 @@ use Craft;
 use craft\errors\ImageException;
 use craft\image\Svg;
 use Imagick;
+use Imagine\Image\Format;
 use Throwable;
 use TypeError;
 use yii\base\InvalidArgumentException;
@@ -55,9 +56,66 @@ class Image
 
         // Fill in the blank
         return [
-            (int)($targetWidth ?: ceil($targetHeight * ($sourceWidth / $sourceHeight))),
-            (int)($targetHeight ?: ceil($targetWidth * ($sourceHeight / $sourceWidth))),
+            (int)($targetWidth ?: round($targetHeight * ($sourceWidth / $sourceHeight))),
+            (int)($targetHeight ?: round($targetWidth * ($sourceHeight / $sourceWidth))),
         ];
+    }
+
+    /**
+     * Returns the target image width and height for an image, based on its transform type and constraints,
+     * and whether the source image should be upscaled.
+     *
+     * @param int $sourceWidth
+     * @param int $sourceHeight
+     * @param int|null $transformWidth
+     * @param int|null $transformHeight
+     * @param string $mode The transform mode (`crop`, `fit`, or `stretch`)
+     * @param bool|null $upscale Whether to upscale the image to fill the transform dimensions.
+     * Defaults to the `upscaleImages` config setting.
+     * @return int[]
+     * @phpstan-return array{int,int}
+     * @since 3.7.55
+     */
+    public static function targetDimensions(
+        int $sourceWidth,
+        int $sourceHeight,
+        ?int $transformWidth,
+        ?int $transformHeight,
+        string $mode = 'crop',
+        ?bool $upscale = null,
+    ): array {
+        [$width, $height] = static::calculateMissingDimension($transformWidth, $transformHeight, $sourceWidth, $sourceHeight);
+        $factor = max($sourceWidth / $width, $sourceHeight / $height);
+
+        if ($upscale ?? Craft::$app->getConfig()->getGeneral()->upscaleImages) {
+            // Special case for 'fit' since that's the only one whose dimensions vary from the transform dimensions
+            if ($mode === 'fit') {
+                $width = (int)round($sourceWidth / $factor);
+                $height = (int)round($sourceHeight / $factor);
+            }
+
+            return [$width, $height];
+        }
+
+        if ($transformWidth === null || $transformHeight === null) {
+            $transformRatio = $sourceWidth / $sourceHeight;
+        } else {
+            $transformRatio = $transformWidth / $transformHeight;
+        }
+
+        $imageRatio = $sourceWidth / $sourceHeight;
+
+        if ($mode === 'fit' || $imageRatio === $transformRatio) {
+            $targetWidth = min($sourceWidth, $width, (int)round($sourceWidth / $factor));
+            $targetHeight = min($sourceHeight, $height, (int)round($sourceHeight / $factor));
+            return [$targetWidth, $targetHeight];
+        }
+
+        // Since we don't want to upscale, make sure the calculated ratios aren't bigger than the actual image size.
+        $newWidth = min($sourceWidth, $transformWidth, (int)round($sourceHeight * $transformRatio));
+        $newHeight = min($sourceHeight, $transformHeight, (int)round($sourceWidth / $transformRatio));
+
+        return [$newWidth, $newHeight];
     }
 
     /**
@@ -68,6 +126,11 @@ class Image
      */
     public static function canManipulateAsImage(string $extension): bool
     {
+        $extension = strtolower($extension);
+        if ($extension === 'heif') {
+            $extension = Format::ID_HEIC;
+        }
+
         $formats = Craft::$app->getImages()->getSupportedImageFormats();
 
         $alwaysManipulatable = ['svg'];
@@ -76,17 +139,29 @@ class Image
         $formats = array_merge($formats, $alwaysManipulatable);
         $formats = array_diff($formats, $neverManipulatable);
 
-        return in_array(strtolower($extension), $formats);
+        return in_array($extension, $formats);
     }
 
     /**
-     * Returns a list of web safe image formats.
+     * Returns a list of web-safe image formats.
      *
      * @return string[]
      */
     public static function webSafeFormats(): array
     {
         return ['jpg', 'jpeg', 'gif', 'png', 'svg', 'webp', 'avif'];
+    }
+
+    /**
+     * Returns whether an extension is web-safe.
+     *
+     * @param string $extension
+     * @return bool
+     * @since 4.3.6
+     */
+    public static function isWebSafe(string $extension): bool
+    {
+        return in_array(strtolower($extension), static::webSafeFormats(), true);
     }
 
     /**
@@ -325,8 +400,8 @@ class Image
                 $matchedHeight * self::_getSizeUnitMultiplier($heightMatch[3])
             );
         } elseif (preg_match(Svg::SVG_VIEWBOX_RE, $svg, $viewboxMatch)) {
-            $width = (int)floor($viewboxMatch[3]);
-            $height = (int)floor($viewboxMatch[4]);
+            $width = (int)floor((float)$viewboxMatch[3]);
+            $height = (int)floor((float)$viewboxMatch[4]);
         } else {
             // Just pretend it's 100x100
             $width = 100;

@@ -33,6 +33,16 @@ class HtmlHelperTest extends TestCase
     }
 
     /**
+     * @dataProvider encodeSpacesDataProvider
+     * @param string $expected
+     * @param string $str
+     */
+    public function testEncodeSpaces(string $expected, string $str): void
+    {
+        self::assertSame($expected, Html::encodeSpaces($str));
+    }
+
+    /**
      * @dataProvider parseTagDataProvider
      * @param array|false $expected
      * @param string $tag
@@ -256,6 +266,27 @@ class HtmlHelperTest extends TestCase
     }
 
     /**
+     *
+     */
+    public function testSvg(): void
+    {
+        $path = dirname(__DIR__, 2) . '/_data/assets/files/craft-logo.svg';
+        $contents = file_get_contents($path);
+
+        $svg = Html::svg($path);
+        self::assertStringStartsWith('<svg', $svg);
+        self::assertStringContainsString('id="Symbols"', $svg);
+
+        $svg = Html::svg($contents);
+        self::assertStringStartsWith('<svg', $svg);
+        self::assertRegExp('/id="\w+\-Symbols"/', $svg);
+
+        $svg = Html::svg($contents, namespace: false);
+        self::assertStringStartsWith('<svg', $svg);
+        self::assertStringContainsString('id="Symbols"', $svg);
+    }
+
+    /**
      * @return array
      */
     public function encodeParamsDataProvider(): array
@@ -279,6 +310,17 @@ class HtmlHelperTest extends TestCase
                 ['whatIsThis' => '!@#$%^&*(){}|::"<><?>/*-~`'],
             ],
             ['😘!@#$%^&amp;*(){}|::&quot;&lt;&gt;&lt;?&gt;/*-~`, {variable2}', $pureVariableString, ['variable1' => '😘!@#$%^&*(){}|::"<><?>/*-~`']],
+        ];
+    }
+
+    /**
+     * @return array
+     */
+    public function encodeSpacesDataProvider(): array
+    {
+        return [
+            ['foo%20bar', 'foo bar'],
+            ['foo%20%20bar', 'foo  bar'],
         ];
     }
 

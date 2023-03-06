@@ -81,6 +81,9 @@
           magnetStrength: 4,
           helperLagBase: 1.5,
           helperOpacity: 0.9,
+          onDragStop: () => {
+            this.trigger('blockSortDragStop');
+          },
           onSortChange: () => {
             this.blockSelect.resetItemOrder();
           },
@@ -117,11 +120,13 @@
           this.addBlock(type);
         });
 
-        new Garnish.MenuBtn(this.$addBlockMenuBtn, {
-          onOptionSelect: (option) => {
-            this.addBlock($(option).data('type'));
-          },
-        });
+        if (this.$addBlockMenuBtn.length) {
+          new Garnish.MenuBtn(this.$addBlockMenuBtn, {
+            onOptionSelect: (option) => {
+              this.addBlock($(option).data('type'));
+            },
+          });
+        }
 
         this.updateAddBlockBtn();
 
@@ -252,11 +257,12 @@
 
         this.totalNewBlocks++;
 
-        var id = 'new' + this.totalNewBlocks;
+        const id = `new${this.totalNewBlocks}`;
+        const typeName = this.blockTypesByHandle[type].name;
         const actionMenuId = `matrixblock-action-menu-${id}`;
 
         var html = `
-                <div class="matrixblock" data-id="${id}" data-type="${type}">
+                <div class="matrixblock" data-id="${id}" data-type="${type}" data-type-name="${typeName}" role="listitem">
                   <input type="hidden" name="${
                     this.inputNamePrefix
                   }[sortOrder][]" value="${id}"/>
@@ -380,8 +386,9 @@
         var $block = $(html);
 
         // Pause the draft editor
-        if (this.$form.data('elementEditor')) {
-          this.$form.data('elementEditor').pause();
+        const elementEditor = this.$form.data('elementEditor');
+        if (elementEditor) {
+          elementEditor.pause();
         }
 
         if ($insertBefore) {
@@ -423,13 +430,13 @@
               if (typeof autofocus === 'undefined' || autofocus) {
                 // Scroll to the block
                 Garnish.scrollContainerToElement($block);
-                // Focus on the first text input
-                $block.find('.text,[contenteditable]').first().trigger('focus');
+                // Focus on the first focusable element
+                $block.find('.flex-fields :focusable').first().trigger('focus');
               }
 
               // Resume the draft editor
-              if (this.$form.data('elementEditor')) {
-                this.$form.data('elementEditor').resume();
+              if (elementEditor) {
+                elementEditor.resume();
               }
             });
           }
@@ -685,7 +692,7 @@
 
             value = $input.text();
           } else {
-            value = Craft.getText(Garnish.getInputPostVal($input));
+            value = Craft.getText(this._inputPreviewText($input));
           }
 
           if (value instanceof Array) {
@@ -756,6 +763,29 @@
       this.collapsed = true;
     },
 
+    _inputPreviewText: function ($input) {
+      if ($input.is('select,multiselect')) {
+        const labels = [];
+        const $options = $input.find('option:selected');
+        for (let k = 0; k < $options.length; k++) {
+          labels.push($options.eq(k).text());
+        }
+        return labels;
+      }
+
+      if (
+        $input.is('input[type="checkbox"]:checked,input[type="radio"]:checked')
+      ) {
+        const id = $input.attr('id');
+        const $label = $(`label[for="${id}"]`);
+        if ($label.length) {
+          return $label.text();
+        }
+      }
+
+      return Garnish.getInputPostVal($input);
+    },
+
     expand: function () {
       if (!this.collapsed) {
         return;
@@ -783,6 +813,7 @@
         () => {
           this.$previewContainer.html('');
           this.$container.height('auto');
+          this.$container.trigger('scroll');
         }
       );
 
@@ -852,19 +883,31 @@
     },
 
     moveUp: function () {
+      this.matrix.trigger('beforeMoveBlockUp', {
+        block: this,
+      });
       let $prev = this.$container.prev('.matrixblock');
       if ($prev.length) {
         this.$container.insertBefore($prev);
         this.matrix.blockSelect.resetItemOrder();
       }
+      this.matrix.trigger('moveBlockUp', {
+        block: this,
+      });
     },
 
     moveDown: function () {
+      this.matrix.trigger('beforeMoveBlockDown', {
+        block: this,
+      });
       let $next = this.$container.next('.matrixblock');
       if ($next.length) {
         this.$container.insertAfter($next);
         this.matrix.blockSelect.resetItemOrder();
       }
+      this.matrix.trigger('moveBlockDown', {
+        block: this,
+      });
     },
 
     handleActionClick: function (event) {
@@ -969,10 +1012,8 @@
     },
 
     selfDestruct: function () {
-      // Pause the draft editor
-      if (this.matrix.$form.data('elementEditor')) {
-        this.matrix.$form.data('elementEditor').pause();
-      }
+      // Remove any inputs from the form data
+      $('[name]', this.$container).removeAttr('name');
 
       this.$container.velocity(
         this.matrix.getHiddenBlockCss(this.$container),
@@ -980,11 +1021,6 @@
         () => {
           this.$container.remove();
           this.matrix.updateAddBlockBtn();
-
-          // Resume the draft editor
-          if (this.matrix.$form.data('elementEditor')) {
-            this.matrix.$form.data('elementEditor').resume();
-          }
 
           this.matrix.trigger('blockDeleted', {
             $block: this.$container,

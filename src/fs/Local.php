@@ -72,8 +72,8 @@ class Local extends Fs implements LocalFsInterface
     {
         // Config normalization
         if (isset($config['path'])) {
-            $config['path'] = FileHelper::normalizePath($config['path']);
-            if ($config['path'] === '' || $config['path'] === '.') {
+            $config['path'] = rtrim(str_replace('\\', '/', $config['path']), '/');
+            if ($config['path'] === '') {
                 unset($config['path']);
             }
         }
@@ -114,7 +114,7 @@ class Local extends Fs implements LocalFsInterface
      */
     public function getSettingsHtml(): ?string
     {
-        return Craft::$app->getView()->renderTemplate('_components/fs/Local/settings',
+        return Craft::$app->getView()->renderTemplate('_components/fs/Local/settings.twig',
             [
                 'volume' => $this,
             ]);
@@ -141,7 +141,9 @@ class Local extends Fs implements LocalFsInterface
      */
     public function getRootPath(): string
     {
-        return FileHelper::normalizePath(App::parseEnv($this->path));
+        $path = FileHelper::normalizePath(App::parseEnv($this->path));
+        // Pass it through realpath() in case the path is symlinked
+        return realpath($path) ?: $path;
     }
 
     /**
@@ -163,11 +165,13 @@ class Local extends Fs implements LocalFsInterface
                 continue;
             }
 
-            $filePath = StringHelper::removeLeft($listing->getRealPath(), $this->prefixPath());
+            $filePath = FileHelper::normalizePath(StringHelper::removeLeft($listing->getRealPath(), $this->prefixPath()), '/');
+            $dirname = pathinfo($filePath, PATHINFO_DIRNAME);
+            $basename = $listing->getFilename();
 
             yield new FsListing([
-                'dirname' => pathinfo($filePath, PATHINFO_DIRNAME),
-                'basename' => $listing->getFilename(),
+                'dirname' => $dirname,
+                'basename' => $basename,
                 'type' => $listing->isDir() ? 'dir' : 'file',
                 'dateModified' => filemtime($listing->getRealPath()),
                 'fileSize' => !$listing->isDir() ? filesize($listing->getRealPath()) : null,

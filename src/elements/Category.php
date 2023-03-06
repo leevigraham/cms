@@ -15,11 +15,8 @@ use craft\db\Query;
 use craft\db\Table;
 use craft\elements\actions\Delete;
 use craft\elements\actions\Duplicate;
-use craft\elements\actions\Edit;
 use craft\elements\actions\NewChild;
 use craft\elements\actions\Restore;
-use craft\elements\actions\SetStatus;
-use craft\elements\actions\View;
 use craft\elements\conditions\categories\CategoryCondition;
 use craft\elements\conditions\ElementConditionInterface;
 use craft\elements\db\CategoryQuery;
@@ -84,6 +81,14 @@ class Category extends Element
     public static function refHandle(): ?string
     {
         return 'category';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public static function trackChanges(): bool
+    {
+        return true;
     }
 
     /**
@@ -236,34 +241,18 @@ class Category extends Element
 
         // Get the group we need to check permissions on
         if (preg_match('/^group:(\d+)$/', $source, $matches)) {
-            $group = Craft::$app->getCategories()->getGroupById($matches[1]);
+            $group = Craft::$app->getCategories()->getGroupById((int)$matches[1]);
         } elseif (preg_match('/^group:(.+)$/', $source, $matches)) {
             $group = Craft::$app->getCategories()->getGroupByUid($matches[1]);
+        } else {
+            $group = null;
         }
 
         // Now figure out what we can do with it
         $actions = [];
         $elementsService = Craft::$app->getElements();
 
-        if (!empty($group)) {
-            // Set Status
-            $actions[] = SetStatus::class;
-
-            // View
-            // They are viewing a specific category group. See if it has URLs for the requested site
-            if (isset($group->siteSettings[$site->id]) && $group->siteSettings[$site->id]->hasUrls) {
-                $actions[] = $elementsService->createAction([
-                    'type' => View::class,
-                    'label' => Craft::t('app', 'View category'),
-                ]);
-            }
-
-            // Edit
-            $actions[] = $elementsService->createAction([
-                'type' => Edit::class,
-                'label' => Craft::t('app', 'Edit category'),
-            ]);
-
+        if ($group) {
             // New Child
             if ($group->maxLevels != 1) {
                 $newChildUrl = 'categories/' . $group->handle . '/new';
@@ -274,7 +263,6 @@ class Category extends Element
 
                 $actions[] = $elementsService->createAction([
                     'type' => NewChild::class,
-                    'label' => Craft::t('app', 'Create a new child category'),
                     'maxLevels' => $group->maxLevels,
                     'newChildUrl' => $newChildUrl,
                 ]);
@@ -302,14 +290,17 @@ class Category extends Element
         }
 
         // Restore
-        $actions[] = $elementsService->createAction([
-            'type' => Restore::class,
-            'successMessage' => Craft::t('app', 'Categories restored.'),
-            'partialSuccessMessage' => Craft::t('app', 'Some categories restored.'),
-            'failMessage' => Craft::t('app', 'Categories not restored.'),
-        ]);
+        $actions[] = Restore::class;
 
         return $actions;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    protected static function includeSetStatusAction(): bool
+    {
+        return true;
     }
 
     /**
@@ -402,7 +393,7 @@ class Category extends Element
      * @inheritdoc
      * @since 3.5.0
      */
-    public function getCacheTags(): array
+    protected function cacheTags(): array
     {
         return [
             "group:$this->groupId",
@@ -539,7 +530,12 @@ class Category extends Element
      */
     public function canDuplicate(User $user): bool
     {
-        return true;
+        if (parent::canDuplicate($user)) {
+            return true;
+        }
+
+        $group = $this->getGroup();
+        return $user->can("saveCategories:$group->uid");
     }
 
     /**
@@ -617,9 +613,11 @@ class Category extends Element
             ],
         ];
 
+        $elementsService = Craft::$app->getElements();
         $user = Craft::$app->getUser()->getIdentity();
+
         foreach ($this->getCanonical()->getAncestors()->all() as $ancestor) {
-            if ($ancestor->canView($user)) {
+            if ($elementsService->canView($ancestor, $user)) {
                 $crumbs[] = [
                     'label' => $ancestor->title,
                     'url' => $ancestor->getCpEditUrl(),
@@ -680,6 +678,7 @@ class Category extends Element
                 'limit' => 1,
                 'elements' => $parent ? [$parent] : [],
                 'disabled' => $static,
+                'describedBy' => 'parentId-label',
             ]);
         })();
 

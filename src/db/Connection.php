@@ -34,7 +34,7 @@ use yii\db\Exception as DbException;
  * @property bool $supportsMb4 Whether the database supports 4+ byte characters.
  * @method MysqlQueryBuilder|PgsqlQueryBuilder getQueryBuilder() Returns the query builder for the current DB connection.
  * @method MysqlSchema|PgsqlSchema getSchema() Returns the schema information for the database opened by this connection.
- * @method TableSchema getTableSchema($name, $refresh = false) Obtains the schema information for the named table.
+ * @method TableSchema|null getTableSchema($name, $refresh = false) Obtains the schema information for the named table.
  * @method Command createCommand($sql = null, $params = []) Creates a command for execution.
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
@@ -265,7 +265,10 @@ class Connection extends \yii\db\Connection
             $backupPath = Craft::$app->getPath()->getDbBackupPath();
 
             // Grab all .sql files in the backup folder.
-            $files = glob($backupPath . DIRECTORY_SEPARATOR . '*.sql');
+            $files = array_merge(
+                glob($backupPath . DIRECTORY_SEPARATOR . '*.sql'),
+                glob($backupPath . DIRECTORY_SEPARATOR . '*.sql.zip'),
+            );
 
             // Sort them by file modified time descending (newest first).
             usort($files, static function($a, $b) {
@@ -448,7 +451,7 @@ class Connection extends \yii\db\Connection
             '{port}' => $parsed['port'] ?? '',
             '{server}' => $parsed['host'] ?? '',
             '{user}' => $username,
-            '{password}' => addslashes(str_replace('$', '\\$', $password)),
+            '{password}' => str_replace('$', '\\$', addslashes($password)),
             '{database}' => $parsed['dbname'] ?? '',
             '{schema}' => $this->getSchema()->defaultSchema ?? '',
         ];
