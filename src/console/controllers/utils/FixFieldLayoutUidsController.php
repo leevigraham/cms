@@ -14,7 +14,7 @@ use craft\helpers\StringHelper;
 use yii\console\ExitCode;
 
 /**
- * Fixes any duplicate UUIDs found within field layout components in the project config.
+ * Fixes any duplicate or missing UUIDs found within field layout components in the project config.
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 4.2.3
@@ -33,7 +33,7 @@ class FixFieldLayoutUidsController extends Controller
         $this->_fixUids(Craft::$app->getProjectConfig()->get(), $count);
 
         if ($count) {
-            $summary = sprintf('Fixed %s duplicate %s.', $count, $count === 1 ? 'UUID' : 'UUIDs');
+            $summary = sprintf('Fixed %s duplicate or missing %s.', $count, $count === 1 ? 'UUID' : 'UUIDs');
         } else {
             $summary = 'No duplicate UUIDs were found.';
         }
@@ -47,29 +47,25 @@ class FixFieldLayoutUidsController extends Controller
 
     private function _fixUids(array $config, int &$count, string $path = '', array &$uids = []): void
     {
-        if (isset($config['fieldLayouts']) && is_array($config['fieldLayouts'])) {
+        if (is_array($config['fieldLayouts'] ?? null)) {
             $modified = false;
-
             foreach ($config['fieldLayouts'] as $fieldLayoutUid => &$fieldLayoutConfig) {
-                if (isset($fieldLayoutConfig['tabs']) && is_array($fieldLayoutConfig['tabs'])) {
-                    foreach ($fieldLayoutConfig['tabs'] as $tabIndex => &$tabConfig) {
-                        $tabPath = ($path ? "$path." : '') . "fieldLayouts.$fieldLayoutUid.tabs.$tabIndex";
-                        $this->_checkUid($tabConfig, $count, $uids, $modified, $tabPath);
-
-                        if (isset($tabConfig['elements']) && is_array($tabConfig['elements'])) {
-                            foreach ($tabConfig['elements'] as $elementIndex => &$elementConfig) {
-                                $elementPath = "$tabPath.elements.$elementIndex";
-                                $this->_checkUid($elementConfig, $count, $uids, $modified, $elementPath);
-                            }
-                        }
-                    }
-                }
+                $fieldLayoutPath = sprintf('%sfieldLayouts.%s', $path ? "$path." : '', $fieldLayoutUid);
+                $this->_fixUidsInLayout($fieldLayoutConfig, $count, $fieldLayoutPath, $uids, $modified);
             }
-
             if ($modified) {
                 Craft::$app->getProjectConfig()->set($path, $config);
             }
+            return;
+        }
 
+        if (is_array($config['fieldLayout'] ?? null)) {
+            $modified = false;
+            $fieldLayoutPath = sprintf('%sfieldLayout', $path ? "$path." : '');
+            $this->_fixUidsInLayout($config['fieldLayout'], $count, $fieldLayoutPath, $uids, $modified);
+            if ($modified) {
+                Craft::$app->getProjectConfig()->set($path, $config);
+            }
             return;
         }
 
@@ -80,22 +76,47 @@ class FixFieldLayoutUidsController extends Controller
         }
     }
 
-    private function _checkUid(array &$config, int &$count, array &$uids, bool &$modified, string $path): void
-    {
-        if (isset($config['uid'])) {
-            if (isset($uids[$config['uid']])) {
-                $config['uid'] = StringHelper::UUID();
-                $count++;
-                $modified = true;
+    private function _fixUidsInLayout(
+        array &$fieldLayoutConfig,
+        int &$count,
+        string $path,
+        array &$uids,
+        bool &$modified,
+    ): void {
+        if (isset($fieldLayoutConfig['tabs']) && is_array($fieldLayoutConfig['tabs'])) {
+            foreach ($fieldLayoutConfig['tabs'] as $tabIndex => &$tabConfig) {
+                $tabPath = "$path.tabs.$tabIndex";
+                $this->_checkUid($tabConfig, $count, $uids, $modified, $tabPath);
 
-                $this->stdout('    > Duplicate found at ');
-                $this->stdout($path, Console::FG_CYAN);
-                $this->stdout(".\n    Changing to ");
-                $this->stdout($config['uid'], Console::FG_CYAN);
-                $this->stdout(".\n");
-            } else {
-                $uids[$config['uid']] = true;
+                if (isset($tabConfig['elements']) && is_array($tabConfig['elements'])) {
+                    foreach ($tabConfig['elements'] as $elementIndex => &$elementConfig) {
+                        $elementPath = "$tabPath.elements.$elementIndex";
+                        $this->_checkUid($elementConfig, $count, $uids, $modified, $elementPath);
+                    }
+                }
             }
         }
+    }
+
+    private function _checkUid(array &$config, int &$count, array &$uids, bool &$modified, string $path): void
+    {
+        if (empty($config['uid'])) {
+            $reason = 'Duplicate UUID found at';
+        } elseif (isset($uids[$config['uid']])) {
+            $reason = 'Missing UUID at';
+        } else {
+            $uids[$config['uid']] = true;
+            return;
+        }
+
+        $config['uid'] = StringHelper::UUID();
+        $count++;
+        $modified = true;
+
+        $this->stdout("    > $reason ");
+        $this->stdout($path, Console::FG_CYAN);
+        $this->stdout(".\n    Setting to ");
+        $this->stdout($config['uid'], Console::FG_CYAN);
+        $this->stdout(".\n");
     }
 }

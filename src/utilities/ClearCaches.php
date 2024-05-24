@@ -72,9 +72,9 @@ class ClearCaches extends Utility
     /**
      * @inheritdoc
      */
-    public static function iconPath(): ?string
+    public static function icon(): ?string
     {
-        return Craft::getAlias('@appicons/trash.svg');
+        return 'trash';
     }
 
     /**
@@ -136,6 +136,7 @@ class ClearCaches extends Utility
                     $dirs = [
                         $pathService->getAssetSourcesPath(false),
                         $pathService->getAssetsIconsPath(false),
+                        $pathService->getImageTransformsPath(false),
                     ];
                     foreach ($dirs as $dir) {
                         try {

@@ -6,6 +6,7 @@
 Craft.Preview = Garnish.Base.extend(
   {
     elementEditor: null,
+    formObserver: null,
 
     $shade: null,
     $editorContainer: null,
@@ -86,7 +87,6 @@ Craft.Preview = Garnish.Base.extend(
         'LivePreview.editorWidth',
         Craft.Preview.defaultEditorWidth
       );
-      this.setAnimationDuration();
 
       Craft.Preview.instances.push(this);
     },
@@ -120,16 +120,11 @@ Craft.Preview = Garnish.Base.extend(
       this._editorWidthInPx = inPx;
     },
 
-    setAnimationDuration: function () {
-      this.animationDuration = Garnish.prefersReducedMotion() ? 0 : 'slow';
-    },
-
     open: function () {
       if (this.isActive) {
         return;
       }
 
-      this.setAnimationDuration();
       this.isActive = true;
       this.trigger('beforeOpen');
 
@@ -162,7 +157,7 @@ Craft.Preview = Garnish.Base.extend(
         }).appendTo(this.$previewWrapper);
         this.$notifier = $('<span/>', {
           class: 'visually-hidden',
-          'aria-live': 'assertive',
+          role: 'status',
         }).appendTo(this.$previewContainer);
 
         var $editorHeader = $('<header/>', {class: 'flex'}).appendTo(
@@ -340,6 +335,9 @@ Craft.Preview = Garnish.Base.extend(
 
       this.updateIframe();
 
+      this.formObserver = new Craft.FormObserver(this.$editor, () => {
+        this.elementEditor.checkForm();
+      });
       this.elementEditor.on('update', this._updateIframeProxy);
 
       Craft.ElementThumbLoader.retryAll();
@@ -463,15 +461,22 @@ Craft.Preview = Garnish.Base.extend(
       this.$editorContainer
         .show()
         .velocity('stop')
-        .animateLeft(0, this.animationDuration, () => {
-          this.trigger('slideIn');
-          Garnish.$win.trigger('resize');
-        });
+        .animateLeft(
+          0,
+          Garnish.getUserPreferredAnimationDuration(this.animationDuration),
+          () => {
+            this.trigger('slideIn');
+            Garnish.$win.trigger('resize');
+          }
+        );
 
       this.$previewContainer
         .show()
         .velocity('stop')
-        .animateRight(0, this.animationDuration);
+        .animateRight(
+          0,
+          Garnish.getUserPreferredAnimationDuration(this.animationDuration)
+        );
 
       this.isVisible = true;
 
@@ -489,7 +494,6 @@ Craft.Preview = Garnish.Base.extend(
         return;
       }
 
-      this.setAnimationDuration();
       this.trigger('beforeClose');
 
       $('html').removeClass('noscroll');
@@ -511,21 +515,31 @@ Craft.Preview = Garnish.Base.extend(
 
       this.$editorContainer
         .velocity('stop')
-        .animateLeft(-this.editorWidthInPx, this.animationDuration, () => {
-          for (var i = 0; i < this.fields.length; i++) {
-            this.fields[i].$newClone.remove();
+        .animateLeft(
+          -this.editorWidthInPx,
+          Garnish.getUserPreferredAnimationDuration(this.animationDuration),
+          () => {
+            for (var i = 0; i < this.fields.length; i++) {
+              this.fields[i].$newClone.remove();
+            }
+            this.$editorContainer.hide();
+            this.trigger('slideOut');
           }
-          this.$editorContainer.hide();
-          this.trigger('slideOut');
-        });
+        );
 
       this.$previewContainer
         .velocity('stop')
-        .animateRight(-this.getIframeWidth(), this.animationDuration, () => {
-          this.$iframeContainer.removeClass('lp-iframe-container--rotating');
-          this.$previewContainer.hide();
-        });
+        .animateRight(
+          -this.getIframeWidth(),
+          Garnish.getUserPreferredAnimationDuration(this.animationDuration),
+          () => {
+            this.$iframeContainer.removeClass('lp-iframe-container--rotating');
+            this.$previewContainer.hide();
+          }
+        );
 
+      this.formObserver.destroy();
+      this.formObserver = null;
       this.elementEditor.off('update', this._updateIframeProxy);
 
       Craft.ElementThumbLoader.retryAll();
@@ -681,17 +695,10 @@ Craft.Preview = Garnish.Base.extend(
             $iframe.on('load', () => {
               this.iframeLoaded = true;
               if (!resetScroll && sameHost) {
-                if (this.scrollTop !== null) {
-                  $($iframe[0].contentWindow.document).scrollTop(
-                    this.scrollTop
-                  );
-                }
-
-                if (this.scrollLeft !== null) {
-                  $($iframe[0].contentWindow.document).scrollLeft(
-                    this.scrollLeft
-                  );
-                }
+                $iframe[0].contentWindow.scrollTo(
+                  this.scrollLeft || 0,
+                  this.scrollTop || 0
+                );
               }
             });
           }
@@ -933,6 +940,7 @@ Craft.Preview = Garnish.Base.extend(
       }
 
       this.updateWidths();
+      this.trigger('drag');
     },
 
     _onDragStop: function () {
@@ -953,11 +961,19 @@ Craft.Preview = Garnish.Base.extend(
     instances: [],
 
     refresh: function () {
-      for (preview of Craft.Preview.instances) {
+      for (let preview of Craft.Preview.instances) {
         preview.updateIframe();
       }
-      for (preview of Craft.LivePreview.instances) {
+      for (let preview of Craft.LivePreview.instances) {
         preview.forceUpdateIframe();
+      }
+    },
+
+    getActive: function () {
+      for (let preview of Craft.Preview.instances) {
+        if (preview.isActive) {
+          return preview;
+        }
       }
     },
   }

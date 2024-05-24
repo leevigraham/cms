@@ -49,17 +49,17 @@ use yii\di\Instance;
 class ImageTransforms extends Component
 {
     /**
-     * @event AssetTransformEvent The event that is triggered before an asset transform is saved
+     * @event AssetTransformEvent The event that is triggered before an image transform is saved
      */
     public const EVENT_BEFORE_SAVE_IMAGE_TRANSFORM = 'beforeSaveImageTransform';
 
     /**
-     * @event AssetTransformEvent The event that is triggered after an asset transform is saved
+     * @event AssetTransformEvent The event that is triggered after an image transform is saved
      */
     public const EVENT_AFTER_SAVE_IMAGE_TRANSFORM = 'afterSaveImageTransform';
 
     /**
-     * @event AssetTransformEvent The event that is triggered before an asset transform is deleted
+     * @event AssetTransformEvent The event that is triggered before an image transform is deleted
      */
     public const EVENT_BEFORE_DELETE_IMAGE_TRANSFORM = 'beforeDeleteImageTransform';
 
@@ -69,12 +69,12 @@ class ImageTransforms extends Component
     public const EVENT_BEFORE_APPLY_TRANSFORM_DELETE = 'beforeApplyTransformDelete';
 
     /**
-     * @event AssetTransformEvent The event that is triggered after an asset transform is deleted
+     * @event AssetTransformEvent The event that is triggered after an image transform is deleted
      */
     public const EVENT_AFTER_DELETE_IMAGE_TRANSFORM = 'afterDeleteImageTransform';
 
     /**
-     * @event AssetEvent The event that is triggered when a transform is being generated for an Asset.
+     * @event AssetEvent The event that is triggered before a transform is deleted for an Asset.
      */
     public const EVENT_BEFORE_INVALIDATE_ASSET_TRANSFORMS = 'beforeInvalidateAssetTransforms';
 
@@ -126,11 +126,10 @@ class ImageTransforms extends Component
     private function _transforms(): MemoizableArray
     {
         if (!isset($this->_transforms)) {
-            $transforms = [];
-            foreach ($this->_createTransformQuery()->all() as $result) {
-                $transforms[] = new ImageTransform($result);
-            }
-            $this->_transforms = new MemoizableArray($transforms);
+            $this->_transforms = new MemoizableArray(
+                $this->_createTransformQuery()->all(),
+                fn(array $result) => new ImageTransform($result),
+            );
         }
 
         return $this->_transforms;
@@ -211,21 +210,8 @@ class ImageTransforms extends Component
         }
 
         $projectConfig = Craft::$app->getProjectConfig();
-
-        $configData = [
-            'format' => $transform->format,
-            'handle' => $transform->handle,
-            'height' => (int)$transform->height ?: null,
-            'interlace' => $transform->interlace,
-            'mode' => $transform->mode,
-            'name' => $transform->name,
-            'position' => $transform->position,
-            'quality' => (int)$transform->quality ?: null,
-            'width' => (int)$transform->width ?: null,
-        ];
-
         $configPath = ProjectConfig::PATH_IMAGE_TRANSFORMS . '.' . $transform->uid;
-        $projectConfig->set($configPath, $configData, "Saving transform “{$transform->handle}”");
+        $projectConfig->set($configPath, $transform->getConfig(), "Saving transform “{$transform->handle}”");
 
         if ($isNewTransform) {
             $transform->id = Db::idByUid(Table::IMAGETRANSFORMS, $transform->uid, $this->db);
@@ -258,8 +244,10 @@ class ImageTransforms extends Component
             $modeChanged = $transformRecord->mode !== $data['mode'] || $transformRecord->position !== $data['position'];
             $qualityChanged = $transformRecord->quality !== $data['quality'];
             $interlaceChanged = $transformRecord->interlace !== $data['interlace'];
+            $fillChanged = $transformRecord->fill !== ($data['fill'] ?? null);
+            $upscaleChanged = $transformRecord->upscale !== ($data['upscale'] ?? null);
 
-            if ($heightChanged || $modeChanged || $qualityChanged || $interlaceChanged) {
+            if ($heightChanged || $modeChanged || $qualityChanged || $interlaceChanged || $fillChanged || $upscaleChanged) {
                 $transformRecord->parameterChangeTime = Db::prepareDateForDb(new DateTime());
                 $deleteTransformIndexes = true;
             }
@@ -271,6 +259,8 @@ class ImageTransforms extends Component
             $transformRecord->quality = $data['quality'];
             $transformRecord->interlace = $data['interlace'];
             $transformRecord->format = $data['format'];
+            $transformRecord->fill = $data['fill'] ?? null;
+            $transformRecord->upscale = $data['upscale'] ?? true;
             $transformRecord->uid = $transformUid;
 
             $transformRecord->save(false);
@@ -600,6 +590,8 @@ class ImageTransforms extends Component
                 'format',
                 'quality',
                 'interlace',
+                'fill',
+                'upscale',
                 'parameterChangeTime',
                 'uid',
             ])

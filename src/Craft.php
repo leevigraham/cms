@@ -7,16 +7,15 @@
 
 use craft\base\FieldInterface;
 use craft\behaviors\CustomFieldBehavior;
-use craft\db\Query;
-use craft\db\Table;
 use craft\helpers\App;
 use craft\helpers\ArrayHelper;
-use craft\helpers\Component;
 use craft\helpers\FileHelper;
 use craft\helpers\StringHelper;
+use craft\models\FieldLayout;
 use GuzzleHttp\Client;
+use Symfony\Component\VarDumper\Cloner\VarCloner;
 use yii\base\ExitException;
-use yii\db\Expression;
+use yii\base\InvalidConfigException;
 use yii\helpers\VarDumper;
 use yii\web\Request;
 use function GuzzleHttp\default_user_agent;
@@ -31,14 +30,28 @@ use function GuzzleHttp\default_user_agent;
  */
 class Craft extends Yii
 {
-    // Edition constants
+    /** @deprecated in 5.0.0. [[\craft\enums\CmsEdition::Solo]] should be used instead. */
     public const Solo = 0;
-    public const Pro = 1;
+    /** @deprecated in 5.0.0. [[\craft\enums\CmsEdition::Pro]] should be used instead. */
+    public const Pro = 2;
 
     /**
      * @var array The default cookie configuration.
      */
     private static array $_baseCookieConfig;
+
+    /**
+     * @inheritdoc
+     */
+    public static function getAlias($alias, $throwException = true)
+    {
+        // @app/icons/file.svg => @appicons/file.svg
+        if (preg_match('/^@app\/icons\/([\w\-]+\.svg)$/', $alias, $match)) {
+            $alias = "@appicons/$match[1]";
+        }
+
+        return parent::getAlias($alias, $throwException);
+    }
 
     /**
      * @inheritdoc
@@ -50,6 +63,10 @@ class Craft extends Yii
      */
     public static function createObject($type, array $params = [])
     {
+        if (is_array($type) && isset($type['__class']) && isset($type['class'])) {
+            throw new InvalidConfigException('`__class` and `class` cannot both be specified.');
+        }
+
         return parent::createObject($type, $params);
     }
 
@@ -102,24 +119,35 @@ class Craft extends Yii
      * Displays a variable.
      *
      * @param mixed $var The variable to be dumped.
-     * @param int $depth The maximum depth that the dumper should go into the variable. Defaults to 10.
-     * @param bool $highlight Whether the result should be syntax-highlighted. Defaults to true.
+     * @param int $depth The maximum depth that the dumper should go into the variable.
+     * @param bool $highlight Whether the result should be syntax-highlighted.
+     * @param bool $return Whether the dump result should be returned instead of output.
+     * @return string|null The output, if `$return` is true
      */
-    public static function dump(mixed $var, int $depth = 10, bool $highlight = true): void
+    public static function dump(mixed $var, int $depth = 20, bool $highlight = true, bool $return = false): ?string
     {
-        VarDumper::dump($var, $depth, $highlight);
+        if (!$highlight) {
+            if ($return) {
+                ob_start();
+            }
+            VarDumper::dump($var, $depth);
+            echo "\n";
+            return $return ? ob_get_clean() : null;
+        }
+
+        $data = (new VarCloner())->cloneVar($var)->withMaxDepth($depth);
+        return Craft::$app->getDumper()->dump($data, $return ? true : null);
     }
 
     /**
      * Displays a variable and ends the request. (“Dump and die”)
      *
      * @param mixed $var The variable to be dumped.
-     * @param int $depth The maximum depth that the dumper should go into the variable. Defaults to 10.
-     * @param bool|null $highlight Whether the result should be syntax-highlighted.
-     * Defaults to `true` for web requests and `false` for console requests.
+     * @param int $depth The maximum depth that the dumper should go into the variable.
+     * @param bool $highlight Whether the result should be syntax-highlighted.
      * @throws ExitException if the application is in testing mode
      */
-    public static function dd(mixed $var, int $depth = 10, ?bool $highlight = null): void
+    public static function dd(mixed $var, int $depth = 20, bool $highlight = true): void
     {
         // Turn off output buffering and discard OB contents
         while (ob_get_length() !== false) {
@@ -130,11 +158,7 @@ class Craft extends Yii
             }
         }
 
-        if ($highlight === null) {
-            $highlight = !static::$app->getRequest()->getIsConsoleRequest();
-        }
-
-        VarDumper::dump($var, $depth, $highlight);
+        static::dump($var, $depth, $highlight);
         exit();
     }
 
@@ -224,27 +248,21 @@ class Craft extends Yii
             // First generate a basic version without real field value types, and load it into memory
             $fieldHandles = [];
             foreach ($fields as $field) {
-                $fieldHandles[$field['handle']]['mixed'] = true;
+                $fieldHandles[$field->handle]['mixed'] = true;
             }
             self::_generateCustomFieldBehavior($fieldHandles, $filePath, false, true);
 
             // Now generate it again, this time with the correct field value types
             $fieldHandles = [];
             foreach ($fields as $field) {
-                /** @var FieldInterface|string $fieldClass */
-                $fieldClass = $field['type'];
-                if (Component::validateComponentClass($fieldClass, FieldInterface::class)) {
-                    $types = explode('|', $fieldClass::valueType());
-                } else {
-                    $types = ['mixed'];
-                }
+                $types = explode('|', $field::phpType());
                 foreach ($types as $type) {
                     $type = trim($type, ' \\');
                     // Add a leading `\` if it’s not a variable, self-reference, or primitive type
                     if (!preg_match('/^(\$.*|(self|static|bool|boolean|int|integer|float|double|string|array|object|callable|callback|iterable|resource|null|mixed|number|void)(\[\])?)$/i', $type)) {
                         $type = '\\' . $type;
                     }
-                    $fieldHandles[$field['handle']][$type] = true;
+                    $fieldHandles[$field->handle][$type] = true;
                 }
             }
             self::_generateCustomFieldBehavior($fieldHandles, $filePath, true, false);
@@ -340,22 +358,23 @@ EOD;
     }
 
     /**
-     * @return array
+     * @return FieldInterface[]
      */
     private static function _fields(): array
     {
-        // Properties are case-sensitive, so get all the binary-unique field handles
-        if (static::$app->getDb()->getIsMysql()) {
-            $handleColumn = new Expression('binary [[handle]] as [[handle]]');
-        } else {
-            $handleColumn = 'handle';
-        }
+        // Return all fields merged with all layouts' field instances, to be sure we're not missing anything
+        $fields = array_merge(
+            static::$app->getFields()->getAllFields(false),
+            ...array_map(
+                fn(FieldLayout $fieldLayout) => $fieldLayout->getCustomFields(),
+                Craft::$app->getFields()->getAllLayouts(),
+            ),
+        );
 
-        // Create an array of field handles and their types
-        return (new Query())
-            ->from([Table::FIELDS])
-            ->select([$handleColumn, 'type'])
-            ->all();
+        // Sort by handle
+        usort($fields, fn(FieldInterface $a, FieldInterface $b) => $a->handle <=> $b->handle);
+
+        return $fields;
     }
 
     /**

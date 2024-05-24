@@ -8,20 +8,25 @@
 namespace craft\helpers;
 
 use Craft;
-use craft\base\BlockElementInterface;
 use craft\base\Element;
+use craft\base\ElementActionInterface;
 use craft\base\ElementInterface;
 use craft\base\Field;
-use craft\base\FieldInterface;
+use craft\base\NestedElementInterface;
 use craft\db\Query;
 use craft\db\Table;
 use craft\errors\OperationAbortedException;
 use craft\fieldlayoutelements\CustomField;
 use craft\i18n\Locale;
 use craft\services\ElementSources;
+use craft\web\View;
 use DateTime;
 use Throwable;
+use Twig\Error\LoaderError as TwigLoaderError;
+use Twig\Markup;
 use yii\base\Exception;
+use yii\base\InvalidConfigException;
+use yii\base\NotSupportedException;
 
 /**
  * Class ElementHelper
@@ -153,7 +158,7 @@ class ElementHelper
 
         $generalConfig = Craft::$app->getConfig()->getGeneral();
         $maxSlugIncrement = Craft::$app->getConfig()->getGeneral()->maxSlugIncrement;
-        $originalSlug = $element->slug;
+        $originalSlug = $element->slug ?? '';
         $originalSlugLen = mb_strlen($originalSlug);
 
         for ($i = 1; $i <= $maxSlugIncrement; $i++) {
@@ -284,7 +289,7 @@ class ElementHelper
      *
      * @param ElementInterface $element The element to return supported site info for
      * @param bool $withUnpropagatedSites Whether to include sites the element is currently not being propagated to
-     * @return array
+     * @return array[]
      * @throws Exception if any of the element’s supported sites are invalid
      */
     public static function supportedSitesForElement(ElementInterface $element, bool $withUnpropagatedSites = false): array
@@ -324,6 +329,44 @@ class ElementHelper
     }
 
     /**
+     * Returns the site statuses for a given element.
+     *
+     * @param ElementInterface $element The element to return site statuses for
+     * @param bool $editableOnly Whether to only return statuses for sites the user has access to
+     * @return array<int,bool> The site statuses, indexed by site ID
+     * @since 4.4.7
+     */
+    public static function siteStatusesForElement(ElementInterface $element, bool $editableOnly = false): array
+    {
+        $supportedSites = static::supportedSitesForElement($element, true);
+        $propagatedSites = array_values(array_filter($supportedSites, fn($site) => $site['propagate']));
+        $propagatedSiteIds = array_map(fn($site) => $site['siteId'], $propagatedSites);
+
+        if ($editableOnly) {
+            $propagatedSiteIds = array_intersect($propagatedSiteIds, Craft::$app->getSites()->getEditableSiteIds());
+        }
+
+        if (!$element->enabled || !$element->id) {
+            // If the element isn't saved yet, assume other sites will share its current status
+            $defaultStatus = !$element->id && $element->enabled && $element->getEnabledForSite();
+            return array_combine($propagatedSiteIds, array_map(fn() => $defaultStatus, $propagatedSiteIds));
+        }
+
+        $siteStatusesQuery = $element::find()
+            ->drafts($element->getIsDraft())
+            ->provisionalDrafts($element->isProvisionalDraft)
+            ->revisions($element->getIsRevision())
+            ->id($element->id)
+            ->siteId($propagatedSiteIds)
+            ->status(null)
+            ->trashed(null)
+            ->asArray()
+            ->select(['elements_sites.siteId', 'elements_sites.enabled']);
+
+        return array_map(fn($enabled) => (bool)$enabled, $siteStatusesQuery->pairs());
+    }
+
+    /**
      * Returns whether changes should be tracked for the given element.
      *
      * @param ElementInterface $element
@@ -337,7 +380,8 @@ class ElementHelper
             $element->siteSettingsId &&
             $element->duplicateOf === null &&
             $element::trackChanges() &&
-            !$element->mergingCanonicalChanges
+            !$element->mergingCanonicalChanges &&
+            !$element->resaving
         );
     }
 
@@ -401,12 +445,36 @@ class ElementHelper
      */
     public static function rootElement(ElementInterface $element): ElementInterface
     {
-        if ($element instanceof BlockElementInterface) {
+        if ($element instanceof NestedElementInterface) {
             $owner = $element->getOwner();
             if ($owner) {
                 return static::rootElement($owner);
             }
         }
+
+        return $element;
+    }
+
+    /**
+     * Returns the root element of a given element, unless the element or any of its owners are not canonical.
+     *
+     * @param ElementInterface $element
+     * @return ElementInterface|null
+     * @since 5.0.0
+     */
+    public static function rootElementIfCanonical(ElementInterface $element): ?ElementInterface
+    {
+        if (!$element->getIsCanonical()) {
+            return null;
+        }
+
+        if ($element instanceof NestedElementInterface) {
+            $owner = $element->getOwner();
+            if ($owner) {
+                return static::rootElementIfCanonical($owner);
+            }
+        }
+
         return $element;
     }
 
@@ -599,6 +667,16 @@ class ElementHelper
             $sources = $source['nested'] ?? [];
         }
 
+        if (!str_starts_with($sourceKey, 'custom:')) {
+            // Let the element get involved
+            /** @var string|ElementInterface $elementType */
+            $source = $elementType::findSource($sourceKey, $context);
+            if ($source) {
+                $source['type'] = ElementSources::TYPE_NATIVE;
+                return $source;
+            }
+        }
+
         return null;
     }
 
@@ -650,41 +728,6 @@ class ElementHelper
     }
 
     /**
-     * Returns the content column name for a given field.
-     *
-     * @param FieldInterface $field
-     * @param string|null $columnKey
-     * @return string|null
-     * @since 3.7.0
-     */
-    public static function fieldColumnFromField(FieldInterface $field, ?string $columnKey = null): ?string
-    {
-        if ($field::hasContentColumn()) {
-            return static::fieldColumn($field->columnPrefix, $field->handle, $field->columnSuffix, $columnKey);
-        }
-
-        return null;
-    }
-
-    /**
-     * Returns the content column name based on the given field attributes.
-     *
-     * @param string|null $columnPrefix
-     * @param string $handle
-     * @param string|null $columnSuffix
-     * @param string|null $columnKey
-     * @return string
-     * @since 3.7.0
-     */
-    public static function fieldColumn(?string $columnPrefix, string $handle, ?string $columnSuffix, ?string $columnKey = null): string
-    {
-        return ($columnPrefix ?? Craft::$app->getContent()->fieldColumnPrefix) .
-            $handle .
-            ($columnKey ? "_$columnKey" : '') .
-            ($columnSuffix ? "_$columnSuffix" : '');
-    }
-
-    /**
      * Returns whether the attribute on the given element is empty.
      *
      * @param ElementInterface $element
@@ -710,11 +753,11 @@ class ElementHelper
     }
 
     /**
-     * Returns the HTML for a given attribute value, to be shown in an element index view.
+     * Returns the HTML for a given attribute value, to be shown in table and card views.
      *
      * @param mixed $value The field value
      * @return string
-     * @since 4.3.0
+     * @since 5.0.0
      */
     public static function attributeHtml(mixed $value): string
     {
@@ -730,13 +773,12 @@ class ElementHelper
                 return '';
             }
 
-            $label = Craft::t('app', 'Enabled');
-            return Html::tag('div', '', [
+            return Html::tag('span', '', [
                 'class' => 'checkbox-icon',
                 'role' => 'img',
-                'title' => $label,
+                'title' => Craft::t('app', 'Enabled'),
                 'aria' => [
-                    'label' => $label,
+                    'label' => Craft::t('app', 'Enabled'),
                 ],
             ]);
         }
@@ -748,5 +790,130 @@ class ElementHelper
         }
 
         return Html::encode(StringHelper::stripHtml($value));
+    }
+
+    /**
+     * Returns the searchable attributes for a given element, ensuring that `slug` and `title` are included.
+     *
+     * @param ElementInterface $element
+     * @return string[]
+     * @since 4.6.0
+     */
+    public static function searchableAttributes(ElementInterface $element): array
+    {
+        $searchableAttributes = array_flip($element::searchableAttributes());
+        $searchableAttributes['slug'] = true;
+        if ($element::hasTitles()) {
+            $searchableAttributes['title'] = true;
+        }
+        return array_keys($searchableAttributes);
+    }
+
+    /**
+     * Returns a generic editor URL for the given element.
+     *
+     * @param ElementInterface $element
+     * @param bool $withParams Whether to include the necessary query string params
+     * @return string
+     * @since 5.0.0
+     */
+    public static function elementEditorUrl(ElementInterface $element, bool $withParams = true): string
+    {
+        $url = sprintf('edit/%s', $element->getCanonicalId());
+
+        if ($element->slug && !static::isTempSlug($element->slug)) {
+            $url .= "-$element->slug";
+        }
+
+        if ($withParams) {
+            return static::addElementEditorUrlParams($url, $element);
+        }
+
+        return UrlHelper::cpUrl($url);
+    }
+
+    /**
+     * Ensures the given element edit URL includes the necessary query string params.
+     *
+     * @param string $url
+     * @param ElementInterface $element
+     * @return string
+     * @since 5.0.0
+     */
+    public static function addElementEditorUrlParams(string $url, ElementInterface $element): string
+    {
+        $params = [];
+
+        if (Craft::$app->getIsMultiSite()) {
+            $params['site'] = $element->getSite()->handle;
+        }
+
+        if ($element->getIsDraft() && !$element->isProvisionalDraft) {
+            $params['draftId'] = $element->draftId;
+        } elseif ($element->getIsRevision()) {
+            $params['revisionId'] = $element->revisionId;
+        }
+
+        return UrlHelper::cpUrl($url, $params);
+    }
+
+    /**
+     * Returns an element action’s JavaScript configuration.
+     *
+     * @param ElementActionInterface $action
+     * @return array
+     * @since 5.0.0
+     */
+    public static function actionConfig(ElementActionInterface $action): array
+    {
+        return [
+            'type' => $action::class,
+            'destructive' => $action->isDestructive(),
+            'download' => $action->isDownload(),
+            'name' => $action->getTriggerLabel(),
+            'trigger' => $action->getTriggerHtml(),
+            'confirm' => $action->getConfirmationMessage(),
+            'settings' => $action->getSettings() ?: null,
+        ];
+    }
+
+    /**
+     * Renders the given elements using their partial templates.
+     *
+     * If no partial template exists for an element, its string representation will be output instead.
+     *
+     * @param ElementInterface[] $elements
+     * @param array $variables
+     * @return Markup
+     * @throws InvalidConfigException
+     * @throws NotSupportedException
+     * @since 5.0.0
+     */
+    public static function renderElements(array $elements, array $variables = []): Markup
+    {
+        $view = Craft::$app->getView();
+        $generalConfig = Craft::$app->getConfig()->getGeneral();
+        $output = [];
+
+        foreach ($elements as $element) {
+            $refHandle = $element::refHandle();
+            if ($refHandle === null) {
+                throw new NotSupportedException(sprintf('Element type “%s” doesn’t define a reference handle, so it doesn’t support partial templates.', $element::displayName()));
+            }
+            $providerHandle = $element->getFieldLayout()?->provider->getHandle();
+            if ($providerHandle === null) {
+                throw new InvalidConfigException(sprintf('Element “%s” doesn’t have a field layout provider that defines a handle, so it can’t be rendered with a partial template.', $element));
+            }
+            $template = sprintf('%s/%s/%s', $generalConfig->partialTemplatesPath, $refHandle, $providerHandle);
+            $variables[$refHandle] = $element;
+            try {
+                $output[] = $view->renderTemplate($template, $variables, View::TEMPLATE_MODE_SITE);
+            } catch (TwigLoaderError) {
+                // fallback to the string representation of the element
+                $output[] = Html::tag('p', Html::encode((string)$element));
+            }
+        }
+
+        return new Markup(implode("\n", $output), Craft::$app->charset);
     }
 }

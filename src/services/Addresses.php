@@ -16,14 +16,15 @@ use CommerceGuys\Addressing\AddressFormat\PostalCodeType;
 use CommerceGuys\Addressing\Country\CountryRepository;
 use CommerceGuys\Addressing\Formatter\DefaultFormatter;
 use CommerceGuys\Addressing\Formatter\FormatterInterface;
-use CommerceGuys\Addressing\Subdivision\SubdivisionRepository;
 use Craft;
+use craft\addresses\SubdivisionRepository;
+use craft\base\FieldLayoutProviderInterface;
 use craft\elements\Address;
 use craft\events\ConfigEvent;
 use craft\events\DefineAddressFieldLabelEvent;
 use craft\events\DefineAddressFieldsEvent;
+use craft\events\DefineAddressSubdivisionsEvent;
 use craft\helpers\ProjectConfig as ProjectConfigHelper;
-use craft\helpers\StringHelper;
 use craft\models\FieldLayout;
 use craft\models\FieldLayoutTab;
 use yii\base\Component;
@@ -38,7 +39,7 @@ use yii\base\Component;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 4.0.0
  */
-class Addresses extends Component
+class Addresses extends Component implements FieldLayoutProviderInterface
 {
     /**
      * @event DefineAddressFieldsEvent The event that is triggered when defining the address fields that are used by a given country code.
@@ -60,6 +61,20 @@ class Addresses extends Component
      * @since 4.3.0
      */
     public const EVENT_DEFINE_FIELD_LABEL = 'defineFieldLabel';
+
+    /**
+     * @event DefineAddressSubdivisionsEvent The event that is triggered when defining subdivisions options for an address field
+     * for a given country code, and optionally administrativeArea and locality.
+     * @see defineAddressSubdivisions()
+     * @since 4.5.0
+     */
+    public const EVENT_DEFINE_ADDRESS_SUBDIVISIONS = 'defineAddressSubdivisions';
+
+    /**
+     * @var FormatterInterface|null The default address formatter used by [[formatAddress()]]
+     * @since 4.5.0
+     */
+    public ?FormatterInterface $formatter = null;
 
     /**
      * @var CountryRepository
@@ -84,6 +99,14 @@ class Addresses extends Component
         $this->_countryRepository = new CountryRepository();
         $this->_subdivisionRepository = new SubdivisionRepository();
         $this->_addressFormatRepository = new AddressFormatRepository();
+
+        if ($this->formatter === null) {
+            $this->formatter = new DefaultFormatter(
+                $this->getAddressFormatRepository(),
+                $this->getCountryRepository(),
+                $this->getSubdivisionRepository()
+            );
+        }
     }
 
     /**
@@ -108,6 +131,29 @@ class Addresses extends Component
     public function getAddressFormatRepository(): AddressFormatRepository
     {
         return $this->_addressFormatRepository;
+    }
+
+    /**
+     * Returns subdivisions for a field based on its parents.
+     *
+     * @param array $parents
+     * @param array $options
+     * @return array
+     * @since 4.5.0
+     */
+    public function defineAddressSubdivisions(array $parents, array $options = []): array
+    {
+        if ($this->hasEventHandlers(self::EVENT_DEFINE_ADDRESS_SUBDIVISIONS)) {
+            $event = new DefineAddressSubdivisionsEvent([
+                'parents' => $parents,
+                'subdivisions' => $options,
+            ]);
+            $this->trigger(self::EVENT_DEFINE_ADDRESS_SUBDIVISIONS, $event);
+
+            return $event->subdivisions;
+        }
+
+        return $options;
     }
 
     /**
@@ -177,6 +223,7 @@ class Addresses extends Component
             AddressField::SORTING_CODE => Craft::t('app', 'Sorting Code'),
             AddressField::ADDRESS_LINE1 => Craft::t('app', 'Address Line 1'),
             AddressField::ADDRESS_LINE2 => Craft::t('app', 'Address Line 2'),
+            AddressField::ADDRESS_LINE3 => Craft::t('app', 'Address Line 3'),
             AddressField::ORGANIZATION => Craft::t('app', 'Organization'),
             AddressField::GIVEN_NAME => Craft::t('app', 'First Name'),
             AddressField::ADDITIONAL_NAME => 'Additional Name', // Unused in Craft
@@ -211,11 +258,7 @@ class Addresses extends Component
         }
 
         if ($formatter === null) {
-            $formatter = new DefaultFormatter(
-                $this->getAddressFormatRepository(),
-                $this->getCountryRepository(),
-                $this->getSubdivisionRepository()
-            );
+            $formatter = $this->formatter;
         }
 
         return $formatter->format($address, $options);
@@ -279,20 +322,27 @@ class Addresses extends Component
             AdministrativeAreaType::DO_SI => Craft::t('app', 'Do Si'),
             AdministrativeAreaType::EMIRATE => Craft::t('app', 'Emirate'),
             AdministrativeAreaType::ISLAND => Craft::t('app', 'Island'),
-            AdministrativeAreaType::OBLAST => Craft::t('app', 'Oblast'),
             AdministrativeAreaType::PARISH => Craft::t('app', 'Parish'),
             AdministrativeAreaType::PREFECTURE => Craft::t('app', 'Prefecture'),
+            AdministrativeAreaType::REGION => Craft::t('app', 'Region'),
             AdministrativeAreaType::STATE => Craft::t('app', 'State'),
             default => Craft::t('app', 'Province'),
         };
     }
 
     /**
-     * Returns the address field layout.
-     *
-     * @return FieldLayout
+     * @inheritdoc
      */
-    public function getLayout(): FieldLayout
+    public function getHandle(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * @inheritdoc
+     * @since 5.0.0
+     */
+    public function getFieldLayout(): FieldLayout
     {
         $fieldLayout = Craft::$app->getFields()->getLayoutByType(Address::class);
 
@@ -318,18 +368,17 @@ class Addresses extends Component
      * @param bool $runValidation Whether the layout should be validated
      * @return bool
      */
-    public function saveLayout(FieldLayout $layout, bool $runValidation = true): bool
+    public function saveFieldLayout(FieldLayout $layout, bool $runValidation = true): bool
     {
         if ($runValidation && !$layout->validate()) {
             Craft::info('Field layout not saved due to validation error.', __METHOD__);
             return false;
         }
 
-        $projectConfig = Craft::$app->getProjectConfig();
-        $fieldLayoutConfig = $layout->getConfig();
-        $uid = StringHelper::UUID();
+        Craft::$app->getProjectConfig()->set(ProjectConfig::PATH_ADDRESS_FIELD_LAYOUTS, [
+            $layout->uid => $layout->getConfig(),
+        ], 'Save the address field layout');
 
-        $projectConfig->set(ProjectConfig::PATH_ADDRESS_FIELD_LAYOUTS, [$uid => $fieldLayoutConfig], 'Save the address field layout');
         return true;
     }
 
@@ -354,7 +403,7 @@ class Addresses extends Component
 
         // Save the field layout
         $layout = FieldLayout::createFromConfig($config);
-        $layout->id = $this->getLayout()->id;
+        $layout->id = $this->getFieldLayout()->id;
         $layout->type = Address::class;
         $layout->uid = key($data);
         $fieldsService->saveLayout($layout);

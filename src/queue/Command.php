@@ -7,6 +7,7 @@
 
 namespace craft\queue;
 
+use craft\console\ControllerTrait;
 use craft\helpers\Console;
 use yii\console\ExitCode;
 use yii\db\Exception as YiiDbException;
@@ -20,6 +21,14 @@ use yii\db\Exception as YiiDbException;
  */
 class Command extends \yii\queue\cli\Command
 {
+    use ControllerTrait;
+
+    /**
+     * @var string The job ID to run
+     * @since 4.8.0
+     */
+    public ?string $jobId = null;
+
     /**
      * @var Queue
      */
@@ -40,21 +49,21 @@ class Command extends \yii\queue\cli\Command
     /**
      * @inheritdoc
      */
-    protected function isWorkerAction($actionID): bool
+    public function options($actionID)
     {
-        return in_array($actionID, ['run', 'listen'], true);
+        $options = parent::options($actionID);
+        if ($actionID === 'run') {
+            $options[] = 'jobId';
+        }
+        return $options;
     }
 
     /**
      * @inheritdoc
      */
-    public function beforeAction($action): bool
+    protected function isWorkerAction($actionID): bool
     {
-        if (!parent::beforeAction($action)) {
-            return false;
-        }
-
-        return true;
+        return in_array($actionID, ['run', 'listen'], true);
     }
 
     /**
@@ -74,6 +83,10 @@ class Command extends \yii\queue\cli\Command
      */
     public function actionRun(): int
     {
+        if ($this->jobId) {
+            return $this->queue->executeJob($this->jobId) ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+        }
+
         return $this->queue->run() ?? ExitCode::OK;
     }
 

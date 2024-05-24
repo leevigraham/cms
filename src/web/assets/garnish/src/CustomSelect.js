@@ -50,7 +50,7 @@ export default Base.extend(
       });
 
       this.$container.find('ul').attr('role', 'group');
-      this.addOptions(this.$container.find('a'));
+      this.addOptions(this.$container.find('a,.menu-item,.menu-option'));
 
       // Deprecated
       if (this.settings.attachToElement) {
@@ -262,7 +262,7 @@ export default Base.extend(
         }
       );
 
-      Garnish.uiLayerManager.removeLayer();
+      Garnish.uiLayerManager.removeLayer(this.$container);
       this.removeListener(Garnish.$scrollContainer, 'scroll');
       this.visible = false;
       this.trigger('hide');

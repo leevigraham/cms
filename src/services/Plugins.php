@@ -149,7 +149,12 @@ class Plugins extends Component
     public function init(): void
     {
         $generalConfig = Craft::$app->getConfig()->getGeneral();
-        $this->_forceDisabledPlugins = is_array($generalConfig->disabledPlugins) ? array_flip($generalConfig->disabledPlugins) : $generalConfig->disabledPlugins;
+
+        if ($generalConfig->safeMode) {
+            $this->_forceDisabledPlugins = '*';
+        } else {
+            $this->_forceDisabledPlugins = is_array($generalConfig->disabledPlugins) ? array_flip($generalConfig->disabledPlugins) : $generalConfig->disabledPlugins;
+        }
 
         $this->_composerPluginInfo = [];
 
@@ -239,7 +244,7 @@ class Plugins extends Component
                     isset($plugin->minVersionRequired) &&
                     $plugin->minVersionRequired &&
                     !str_starts_with($row['version'], 'dev-') &&
-                    !StringHelper::endsWith($row['version'], '-dev') &&
+                    !str_ends_with($row['version'], '-dev') &&
                     version_compare($row['version'], $plugin->minVersionRequired, '<')
                 ) {
                     throw new HttpException(200, Craft::t('app', 'You need to be on at least {plugin} {version} before you can update to {plugin} {targetVersion}.', [
@@ -833,22 +838,16 @@ class Plugins extends Component
      * Updates a plugin’s stored version & schema version to match what’s Composer-installed.
      *
      * @param PluginInterface $plugin
-     * @return void
-     * @throws InvalidPluginException if there’s no record of the plugin in the database
      * @since 3.7.13
      */
     public function updatePluginVersionInfo(PluginInterface $plugin): void
     {
-        $success = (bool)Db::update(Table::PLUGINS, [
+        Db::update(Table::PLUGINS, [
             'version' => $plugin->getVersion(),
             'schemaVersion' => $plugin->schemaVersion,
         ], [
             'handle' => $plugin->id,
         ]);
-
-        if (!$success) {
-            throw new InvalidPluginException($plugin->id);
-        }
 
         // Update our cache of the versions
         $this->loadPlugins();
@@ -1010,21 +1009,26 @@ class Plugins extends Component
 
         $info['isInstalled'] = $installed = $pluginInfo !== null;
         $info['isEnabled'] = $plugin !== null;
+        $info['private'] = str_starts_with($handle, '_');
         $info['moduleId'] = $handle;
         $info['edition'] = $edition;
         $info['hasMultipleEditions'] = count($editions) > 1;
         $info['hasCpSettings'] = ($plugin !== null && $plugin->hasCpSettings);
         $info['licenseKey'] = $pluginInfo['licenseKey'] ?? null;
-        $info['licenseKeyStatus'] = $pluginInfo['licenseKeyStatus'] ?? LicenseKeyStatus::Unknown;
-        $info['licensedEdition'] = $pluginInfo['licensedEdition'] ?? null;
+
+        $licenseInfo = Craft::$app->getCache()->get('licenseInfo') ?? [];
+        $pluginCacheKey = StringHelper::ensureLeft($handle, 'plugin-');
+        $info['licenseId'] = $licenseInfo[$pluginCacheKey]['id'] ?? null;
+        $info['licensedEdition'] = $licenseInfo[$pluginCacheKey]['edition'] ?? null;
+        $info['licenseKeyStatus'] = $licenseInfo[$pluginCacheKey]['status'] ?? LicenseKeyStatus::Unknown->value;
         $info['licenseIssues'] = $installed ? $this->getLicenseIssues($handle) : [];
 
         $info['isTrial'] = (
             $installed &&
             (
-                $info['licenseKeyStatus'] === LicenseKeyStatus::Trial ||
+                $info['licenseKeyStatus'] === LicenseKeyStatus::Trial->value ||
                 (
-                    $info['licenseKeyStatus'] === LicenseKeyStatus::Valid &&
+                    $info['licenseKeyStatus'] === LicenseKeyStatus::Valid->value &&
                     !empty($pluginInfo['licensedEdition'])
                     && $pluginInfo['licensedEdition'] !== $edition
                 )
@@ -1081,9 +1085,9 @@ class Plugins extends Component
             return [];
         }
 
-        $status = $pluginInfo['licenseKeyStatus'] ?? LicenseKeyStatus::Unknown;
+        $status = $pluginInfo['licenseKeyStatus'] ?? LicenseKeyStatus::Unknown->value;
 
-        if ($status === LicenseKeyStatus::Unknown) {
+        if ($status === LicenseKeyStatus::Unknown->value) {
             // Either we don't know yet, or the plugin is free
             return [];
         }
@@ -1102,14 +1106,14 @@ class Plugins extends Component
 
         // General license issues
         switch ($pluginInfo['licenseKeyStatus']) {
-            case LicenseKeyStatus::Trial:
+            case LicenseKeyStatus::Trial->value:
                 if (!$canTestEditions) {
                     $issues[] = empty($pluginInfo['licenseKey']) ? 'required' : 'no_trials';
                 }
                 break;
-            case LicenseKeyStatus::Invalid:
-            case LicenseKeyStatus::Mismatched:
-            case LicenseKeyStatus::Astray:
+            case LicenseKeyStatus::Invalid->value:
+            case LicenseKeyStatus::Mismatched->value:
+            case LicenseKeyStatus::Astray->value:
                 $issues[] = $pluginInfo['licenseKeyStatus'];
                 break;
         }
@@ -1192,9 +1196,12 @@ class Plugins extends Component
             }
         }
 
-        // If we've cached the plugin’s license key status, update the cache
-        if ($this->getPluginLicenseKeyStatus($handle) !== LicenseKeyStatus::Unknown) {
-            $this->setPluginLicenseKeyStatus($handle, LicenseKeyStatus::Unknown);
+        // Clear the plugin's cached license key status
+        $cache = Craft::$app->getCache();
+        $licenseInfo = $cache->get('licenseInfo') ?? [];
+        if (isset($licenseInfo[$handle])) {
+            unset($licenseInfo[$handle]);
+            $cache->set('licenseInfo', $licenseInfo);
         }
 
         return true;
@@ -1233,41 +1240,12 @@ class Plugins extends Component
      * Returns the license key status of a given plugin.
      *
      * @param string $handle The plugin’s handle
-     * @return string
+     * @return LicenseKeyStatus
      */
-    public function getPluginLicenseKeyStatus(string $handle): string
+    public function getPluginLicenseKeyStatus(string $handle): LicenseKeyStatus
     {
-        return $this->getStoredPluginInfo($handle)['licenseKeyStatus'] ?? LicenseKeyStatus::Unknown;
-    }
-
-    /**
-     * Sets the license key status for a given plugin.
-     *
-     * @param string $handle The plugin’s handle
-     * @param string|null $licenseKeyStatus The plugin’s license key status
-     * @param string|null $licensedEdition The plugin’s licensed edition, if the key is valid
-     * @throws InvalidPluginException if the plugin isn’t installed
-     */
-    public function setPluginLicenseKeyStatus(string $handle, ?string $licenseKeyStatus = null, ?string $licensedEdition = null): void
-    {
-        $pluginInfo = $this->getPluginInfo($handle);
-
-        if (!$pluginInfo['isInstalled']) {
-            throw new InvalidPluginException($handle);
-        }
-
-        Db::update(Table::PLUGINS, [
-            'licenseKeyStatus' => $licenseKeyStatus,
-            'licensedEdition' => $licensedEdition,
-        ], [
-            'handle' => $handle,
-        ]);
-
-        // Update our cache of it
-        if (isset($this->_storedPluginInfo[$handle])) {
-            $this->_storedPluginInfo[$handle]['licenseKeyStatus'] = $licenseKeyStatus;
-            $this->_storedPluginInfo[$handle]['licensedEdition'] = $licensedEdition;
-        }
+        $info = $this->getStoredPluginInfo($handle);
+        return LicenseKeyStatus::tryFrom($info['licenseKeyStatus'] ?? '') ?? LicenseKeyStatus::Unknown;
     }
 
     /**
@@ -1283,8 +1261,6 @@ class Plugins extends Component
                 'handle',
                 'version',
                 'schemaVersion',
-                'licenseKeyStatus',
-                'licensedEdition',
                 'installDate',
             ])
             ->from([Table::PLUGINS]);

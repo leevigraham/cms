@@ -9,7 +9,6 @@ namespace craft\helpers;
 
 use Craft;
 use craft\base\ElementInterface;
-use craft\base\ExpirableElementInterface;
 use craft\db\Paginator;
 use craft\web\twig\variables\Paginate;
 use craft\web\View;
@@ -18,9 +17,11 @@ use Twig\Error\RuntimeError;
 use Twig\Markup;
 use Twig\Source;
 use Twig\Template as TwigTemplate;
+use Twig\TemplateWrapper;
 use yii\base\BaseObject;
 use yii\base\InvalidConfigException;
 use yii\base\UnknownMethodException;
+use yii\base\UnknownPropertyException;
 use yii\db\Query;
 use yii\db\QueryInterface;
 use function twig_get_attribute;
@@ -54,6 +55,40 @@ class Template
     private static array $_profileCounters;
 
     /**
+     * @var array Dynamically-defined fallback variables
+     * @see fallbackExists()
+     * @see fallback()
+     */
+    private static array $_fallbacks = [];
+
+    /**
+     * Returns whether a fallback variable has been defined.
+     *
+     * @param string $name
+     * @return bool
+     * @since 4.4.0
+     */
+    public static function fallbackExists(string $name): bool
+    {
+        return isset(self::$_fallbacks[$name]);
+    }
+
+    /**
+     * Provides dynamically-defined fallback variable’s value.
+     *
+     * @param string $name
+     * @throws UnknownPropertyException if `$name` isn’t defined as a fallback variable.
+     * @since 4.4.0
+     */
+    public static function fallback(string $name): mixed
+    {
+        if (!static::fallbackExists($name)) {
+            throw new UnknownPropertyException("$name is not defined as a fallback template variable.");
+        }
+        return self::$_fallbacks[$name];
+    }
+
+    /**
      * Returns the attribute value for a given array/object.
      *
      * @param Environment $env
@@ -64,31 +99,27 @@ class Template
      * @param string $type The type of attribute (@see [[TwigTemplate]] constants)
      * @param bool $isDefinedTest Whether this is only a defined check
      * @param bool $ignoreStrictCheck Whether to ignore the strict attribute check or not
+     * @param bool $sandboxed Whether sandboxing is enabled
+     * @param int $lineno The template line where the attribute was called
      * @return mixed The attribute value, or a Boolean when $isDefinedTest is true, or null when the attribute is not set and $ignoreStrictCheck is true
      * @throws RuntimeError if the attribute does not exist and Twig is running in strict mode and $isDefinedTest is false
      * @internal
      */
-    public static function attribute(Environment $env, Source $source, mixed $object, mixed $item, array $arguments = [], string $type = TwigTemplate::ANY_CALL, bool $isDefinedTest = false, bool $ignoreStrictCheck = false): mixed
-    {
+    public static function attribute(
+        Environment $env,
+        Source $source,
+        mixed $object,
+        mixed $item,
+        array $arguments = [],
+        string $type = TwigTemplate::ANY_CALL,
+        bool $isDefinedTest = false,
+        bool $ignoreStrictCheck = false,
+        bool $sandboxed = false,
+        int $lineno = -1,
+    ): mixed {
         // Include this element in any active caches
         if ($object instanceof ElementInterface) {
-            $elementsService = Craft::$app->getElements();
-            if ($elementsService->getIsCollectingCacheInfo()) {
-                $class = get_class($object);
-                $elementsService->collectCacheTags([
-                    'element',
-                    "element::$class",
-                    "element::$class::$object->id",
-                ]);
-
-                // If the element is expirable, register its expiry date
-                if (
-                    $object instanceof ExpirableElementInterface &&
-                    ($expiryDate = $object->getExpiryDate()) !== null
-                ) {
-                    $elementsService->setCacheExpiryDate($expiryDate);
-                }
-            }
+            Craft::$app->getElements()->collectCacheInfoForElement($object);
         }
 
         if (
@@ -107,7 +138,18 @@ class Template
         }
 
         try {
-            return twig_get_attribute($env, $source, $object, $item, $arguments, $type, $isDefinedTest, $ignoreStrictCheck);
+            return twig_get_attribute(
+                $env,
+                $source,
+                $object,
+                $item,
+                $arguments,
+                $type,
+                $isDefinedTest,
+                $ignoreStrictCheck,
+                $sandboxed,
+                $lineno,
+            );
         } catch (UnknownMethodException $e) {
             // Copy twig_get_attribute()'s BadMethodCallException handling
             if ($ignoreStrictCheck || !$env->isStrictVariables()) {
@@ -251,7 +293,7 @@ class Template
     public static function css(string $css, array $options = [], ?string $key = null): void
     {
         // Is this a CSS file?
-        if (preg_match('/^[^\r\n]+\.css$/i', $css) || UrlHelper::isAbsoluteUrl($css)) {
+        if (preg_match('/^[^\r\n]+\.css(\.gz)?$/i', $css) || UrlHelper::isAbsoluteUrl($css)) {
             Craft::$app->getView()->registerCssFile($css, $options, $key);
         } else {
             Craft::$app->getView()->registerCss($css, $options, $key);
@@ -272,7 +314,7 @@ class Template
     public static function js(string $js, array $options = [], ?string $key = null): void
     {
         // Is this a JS file?
-        if (preg_match('/^[^\r\n]+\.js$/i', $js) || UrlHelper::isAbsoluteUrl($js)) {
+        if (preg_match('/^[^\r\n]+\.js(\.gz)?$/i', $js) || UrlHelper::isAbsoluteUrl($js)) {
             Craft::$app->getView()->registerJsFile($js, $options, $key);
         } else {
             $position = $options['position'] ?? View::POS_READY;
@@ -322,5 +364,31 @@ class Template
         }
 
         return [$templatePath, $templateLine];
+    }
+
+    /**
+     * Filters the template from a context array.
+     *
+     * Used by the `dump()` function and `dd` tags.
+     *
+     * @param array $context
+     * @return array
+     * @since 4.4.0
+     */
+    public static function contextWithoutTemplate(array $context): array
+    {
+        // Template check copied from twig_var_dump()
+        return array_filter($context, fn($value) => !$value instanceof TwigTemplate && !$value instanceof TemplateWrapper);
+    }
+
+    /**
+     * Preloads Single section entries as fallback values for [[fallbackValue()]]
+     *
+     * @param string[] $handles
+     * @since 4.4.0
+     */
+    public static function preloadSingles(array $handles): void
+    {
+        self::$_fallbacks += Craft::$app->getEntries()->getSingleEntriesByHandle($handles);
     }
 }

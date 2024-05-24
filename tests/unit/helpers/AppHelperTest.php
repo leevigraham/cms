@@ -9,6 +9,7 @@ namespace crafttests\unit\helpers;
 
 use Craft;
 use craft\config\GeneralConfig;
+use craft\enums\CmsEdition;
 use craft\helpers\App;
 use craft\mail\transportadapters\Sendmail;
 use craft\models\MailSettings;
@@ -41,15 +42,19 @@ class AppHelperTest extends TestCase
         putenv('TEST_GETENV_ENV');
 
         putenv('TEST_GETENV_TRUE_ENV=true');
-        self::assertSame(true, App::env('TEST_GETENV_TRUE_ENV'));
+        self::assertTrue(App::env('TEST_GETENV_TRUE_ENV'));
         putenv('TEST_GETENV_TRUE_ENV');
 
         putenv('TEST_GETENV_FALSE_ENV=false');
-        self::assertSame(false, App::env('TEST_GETENV_FALSE_ENV'));
+        self::assertFalse(App::env('TEST_GETENV_FALSE_ENV'));
         putenv('TEST_GETENV_FALSE_ENV');
 
         self::assertSame(CRAFT_TESTS_PATH, App::env('CRAFT_TESTS_PATH'));
-        self::assertSame(null, App::env('TEST_NONEXISTENT_ENV'));
+        self::assertNull(App::env('TEST_NONEXISTENT_ENV'));
+
+        putenv('SHH=foo');
+        self::assertSame('foo', App::env('SHH'));
+        putenv('SHH');
     }
 
     /**
@@ -87,10 +92,10 @@ class AppHelperTest extends TestCase
      */
     public function testParseEnv(): void
     {
-        self::assertSame(null, App::parseEnv(null));
+        self::assertNull(App::parseEnv(null));
         self::assertSame(CRAFT_TESTS_PATH, App::parseEnv('$CRAFT_TESTS_PATH'));
         self::assertSame('CRAFT_TESTS_PATH', App::parseEnv('CRAFT_TESTS_PATH'));
-        self::assertSame('$TEST_MISSING', App::parseEnv('$TEST_MISSING'));
+        self::assertSame(null, App::parseEnv('$TEST_MISSING'));
         self::assertSame(Craft::getAlias('@vendor/foo'), App::parseEnv('@vendor/foo'));
     }
 
@@ -147,7 +152,11 @@ class AppHelperTest extends TestCase
      */
     public function testEditions(): void
     {
-        self::assertEquals([Craft::Solo, Craft::Pro], App::editions());
+        self::assertEquals([
+            CmsEdition::Solo->value,
+            CmsEdition::Team->value,
+            CmsEdition::Pro->value,
+        ], App::editions());
     }
 
     /**
@@ -304,6 +313,18 @@ class AppHelperTest extends TestCase
     }
 
     /**
+     *
+     */
+    public function testSilence(): void
+    {
+        self::assertSame('foo', App::silence(fn() => 'foo'));
+        self::assertNull(App::silence(function() {
+        }));
+        self::assertNull(App::silence(function(): void {
+        }));
+    }
+
+    /**
      * @todo More needed here to test with constant and invalid file path.
      * See coverage report for more info.
      */
@@ -360,7 +381,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function envConfigDataProvider(): array
+    public static function envConfigDataProvider(): array
     {
         return [
             [
@@ -411,7 +432,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function parseBooleanEnvDataProvider(): array
+    public static function parseBooleanEnvDataProvider(): array
     {
         return [
             [true, true],
@@ -429,17 +450,19 @@ class AppHelperTest extends TestCase
             [true, 1],
             [false, 0],
             [null, 2],
+            [null, '$TEST_MISSING'],
         ];
     }
 
     /**
      * @return array
      */
-    public function editionHandleDataProvider(): array
+    public static function editionHandleDataProvider(): array
     {
         return [
-            ['solo', Craft::Solo],
-            ['pro', Craft::Pro],
+            ['solo', CmsEdition::Solo->value],
+            ['team', CmsEdition::Team->value],
+            ['pro', CmsEdition::Pro->value],
             [false, -1],
         ];
     }
@@ -447,11 +470,12 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function editionNameDataProvider(): array
+    public static function editionNameDataProvider(): array
     {
         return [
-            ['Solo', Craft::Solo],
-            ['Pro', Craft::Pro],
+            ['Solo', CmsEdition::Solo->value],
+            ['Team', CmsEdition::Team->value],
+            ['Pro', CmsEdition::Pro->value],
             [false, -1],
         ];
     }
@@ -459,11 +483,12 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function editionIdByHandleDataProvider(): array
+    public static function editionIdByHandleDataProvider(): array
     {
         return [
-            [Craft::Solo, 'solo'],
-            [Craft::Pro, 'pro'],
+            [CmsEdition::Solo->value, 'solo'],
+            [CmsEdition::Team->value, 'team'],
+            [CmsEdition::Pro->value, 'pro'],
             [false, 'personal'],
             [false, 'client'],
         ];
@@ -472,19 +497,20 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function validEditionsDataProvider(): array
+    public static function validEditionsDataProvider(): array
     {
         return [
-            [true, Craft::Pro],
-            [true, Craft::Solo],
+            [true, CmsEdition::Pro->value],
+            [true, CmsEdition::Team->value],
+            [true, CmsEdition::Solo->value],
             [true, '1'],
             [true, 0],
             [true, 1],
-            [true, true],
+            [true, 2],
+            [false, true],
             [false, null],
             [false, false],
             [false, 4],
-            [false, 2],
             [false, 3],
         ];
     }
@@ -492,7 +518,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function configsDataProvider(): array
+    public static function configsDataProvider(): array
     {
         return [
             ['assetManagerConfig', ['class', 'basePath', 'baseUrl', 'fileMode', 'dirMode', 'appendTimestamp']],
@@ -508,7 +534,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function phpSizeToBytesDataProvider(): array
+    public static function phpSizeToBytesDataProvider(): array
     {
         return [
             [1, '1B'],
@@ -521,7 +547,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function humanizeClassDataProvider(): array
+    public static function humanizeClassDataProvider(): array
     {
         return [
             ['entries', Entries::class],
@@ -533,7 +559,7 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function normalizeValueDataProvider(): array
+    public static function normalizeValueDataProvider(): array
     {
         return [
             [true, 'true'],
@@ -552,18 +578,26 @@ class AppHelperTest extends TestCase
     /**
      * @return array
      */
-    public function normalizeVersionDataProvider(): array
+    public static function normalizeVersionDataProvider(): array
     {
         return [
-            ['version', 'version 21'],
-            ['v120.19.2', 'v120.19.2--beta'],
-            ['version', 'version'],
-            ['2\0\0', '2\0\0'],
+            ['21', 'version 21'],
+            ['120.19.2', 'v120.19.2--beta'],
+            ['', 'version'],
+            ['2', '2\0\0'],
             ['2', '2+2+2'],
             ['2', '2-0-0'],
-            ['~2', '~2'],
+            ['', '~2'],
             ['', ''],
-            ['\*v^2.0.0(beta)', '\*v^2.0.0(beta)'],
+            ['', '\*v^2.0.0(beta)'],
+            ['2.0.0-alpha', '2.0.0-alpha+foo'],
+            ['2.0.0-alpha', '2.0.0-alpha.+foo'],
+            ['2.0.0-alpha.10', '2.0.0-alpha.10+foo'],
+            ['10.5.13', '5.5.5-10.5.13-MariaDB-1:10.5.13+maria~focal-log'],
+            ['10.3.38', '10.3.38-MariaDB-1:10.3.38+maria~ubu2004-log'],
+            ['5.5.5', '5.5.5-ubuntu-20.04'],
+            ['10.3.38', '5.5.5-10.3.38-ubuntu-20.04'],
+            ['5.7.16', '5.7.16-0ubuntu0.16.04.1'],
         ];
     }
 

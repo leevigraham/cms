@@ -11,7 +11,9 @@ Craft.ColorInput = Garnish.Base.extend(
     $colorPreview: null,
     $colorInput: null,
 
-    init: function (container) {
+    init: function (container, settings) {
+      this.setSettings(settings, Craft.ColorInput.defaults);
+
       this.$container = $(container);
       this.$input = this.$container.find('.color-input');
       this.$colorContainer = this.$container.children('.color');
@@ -41,6 +43,17 @@ Craft.ColorInput = Garnish.Base.extend(
         })
         .appendTo(this.$colorPreview);
 
+      if (this.settings.presets?.length) {
+        const listId = `listbox-${Math.floor(Math.random() * 1000000)}`;
+        this.$colorInput.attr('list', listId);
+        const $list = $('<datalist/>', {
+          id: listId,
+        }).insertAfter(this.$colorInput);
+        for (let color of this.settings.presets) {
+          $('<option/>').text(color).appendTo($list);
+        }
+      }
+
       this.addListener(this.$colorInput, 'click', function (ev) {
         ev.stopPropagation();
       });
@@ -60,7 +73,7 @@ Craft.ColorInput = Garnish.Base.extend(
     handleTextChange: function () {
       let val = this.$input.val();
 
-      if (val !== (val = Craft.trim(val))) {
+      if (val !== (val = val.trim())) {
         this.$input.val(val);
       }
 
@@ -92,6 +105,10 @@ Craft.ColorInput = Garnish.Base.extend(
     },
   },
   {
+    defaults: {
+      presets: [],
+    },
+
     _browserSupportsColorInputs: null,
 
     doesBrowserSupportColorInputs: function () {

@@ -8,9 +8,10 @@
     id: 'name',
     name: 'name',
     value: (filesystem is defined ? filesystem.name : null),
-    errors: (filesystem is defined ? filesystem.getErrors('name') : null),
     autofocus: true,
     required: true,
+    errors: (filesystem is defined ? filesystem.getErrors('name') : null),
+    data: {'error-key': 'name'},
 }) }}
 
 {{ forms.textField({
@@ -22,32 +23,10 @@
     autocorrect: false,
     autocapitalize: false,
     value: (filesystem is defined ? filesystem.handle : null),
-    errors: (filesystem is defined ? filesystem.getErrors('handle') : null),
     required: true,
+    errors: (filesystem is defined ? filesystem.getErrors('handle') : null),
+    data: {'error-key': 'handle'},
 }) }}
-
-{{ forms.lightswitchField({
-    label: 'Files in this filesystem have public URLs'|t('app'),
-    name: 'hasUrls',
-    on:   filesystem.hasUrls,
-    toggle: "url-field"
-}) }}
-
-<div id="url-field" class="{% if not filesystem.hasUrls %}hidden{% endif %}">
-    {{ forms.autosuggestField({
-        label: "Base URL"|t('app'),
-        instructions: "The base URL to the files in this filesystem."|t('app'),
-        id: 'url',
-        class: ['ltr', 'fs-url'],
-        name: 'url',
-        suggestEnvVars: true,
-        suggestAliases: true,
-        value: (filesystem is defined ? filesystem.url : null),
-        errors: (filesystem is defined ? filesystem.getErrors('url') : null),
-        required: true,
-        placeholder: "//example.com/path/to/folder"
-    }) }}
-</div>
 
 <hr>
 
@@ -67,10 +46,12 @@
     {% set isCurrent = (fsType == className(filesystem)) %}
 
     <div id="{{ fsType|id }}"{% if not isCurrent %} class="hidden"{% endif %}>
-        {% namespace 'types['~fsType~']' %}
+        {% namespace 'types['~fsType|id~']' %}
             {% if isCurrent %}
+                {{ _self.fsUrlFields(filesystem) }}
                 {{ filesystem.getSettingsHtml()|raw }}
             {% else %}
+                {{ _self.fsUrlFields(fsInstances[fsType]) }}
                 {{ fsInstances[fsType].getSettingsHtml()|raw }}
             {% endif %}
         {% endnamespace %}
@@ -83,3 +64,37 @@
         new Craft.HandleGenerator("#{{ 'name'|namespaceInputId }}", "#{{ 'handle'|namespaceInputId }}");
     {% endjs %}
 {% endif %}
+
+
+{% macro fsUrlFields(filesystem) %}
+    {% if filesystem.getShowHasUrlSetting() %}
+        {{ forms.lightswitchField({
+            label: 'Files in this filesystem have public URLs'|t('app'),
+            name: 'hasUrls',
+            id: 'has-urls',
+            on:   filesystem.hasUrls,
+            toggle: filesystem.getShowUrlSetting() ? "url-field-container" : null
+        }) }}
+    {% endif %}
+
+    {% if filesystem.getShowUrlSetting() %}
+        <div id="url-field-container" class="{% if not filesystem.hasUrls %}hidden{% endif %}">
+            {{ forms.autosuggestField({
+                label: "Base URL"|t('app'),
+                instructions: "The base URL to the files in this filesystem."|t('app'),
+                id: 'url',
+                class: ['ltr', 'fs-url'],
+                name: 'url',
+                suggestEnvVars: true,
+                suggestAliases: true,
+                value: (filesystem is defined ? filesystem.url : null),
+                required: true,
+                placeholder: "//example.com/path/to/folder",
+                errors: (filesystem is defined ? filesystem.getErrors('url') : null),
+                data: {'error-key': 'url'},
+            }) }}
+        </div>
+    {% endif %}
+
+    <hr />
+{% endmacro %}

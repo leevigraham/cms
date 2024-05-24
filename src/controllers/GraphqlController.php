@@ -18,9 +18,11 @@ use craft\helpers\Json;
 use craft\helpers\UrlHelper;
 use craft\models\GqlSchema;
 use craft\models\GqlToken;
+use craft\models\Site;
 use craft\services\Gql as GqlService;
 use craft\web\assets\graphiql\GraphiqlAsset;
 use craft\web\Controller;
+use craft\web\ErrorHandler;
 use Throwable;
 use yii\base\Exception;
 use yii\base\InvalidArgumentException;
@@ -59,13 +61,15 @@ class GraphqlController extends Controller
             throw new NotFoundHttpException(Craft::t('yii', 'Page not found.'));
         }
 
-        Craft::$app->requireEdition(Craft::Pro);
-
         if ($action->id === 'api') {
             $this->enableCsrfValidation = false;
         }
 
-        return parent::beforeAction($action);
+        if (!parent::beforeAction($action)) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -109,6 +113,9 @@ class GraphqlController extends Controller
 
         $gqlService = Craft::$app->getGql();
         $schema = $this->_schema($gqlService);
+
+        $this->_enforceSiteAccess($schema);
+
         $query = $operationName = $variables = null;
 
         // Check the body if it's a POST request
@@ -158,6 +165,15 @@ class GraphqlController extends Controller
             }
         }
 
+        if ($generalConfig->maxGraphqlBatchSize && count($queries) > $generalConfig->maxGraphqlBatchSize) {
+            throw new BadRequestHttpException(sprintf(
+                'No more than %s GraphQL %s can be executed in a single batch.',
+                $generalConfig->maxGraphqlBatchSize,
+                $generalConfig->maxGraphqlBatchSize === 1 ? 'query' : 'queries'
+            ));
+        }
+
+
         // Generate all transforms immediately
         $generalConfig->generateTransformsBeforePageLoad = true;
 
@@ -169,21 +185,30 @@ class GraphqlController extends Controller
         }
 
         $result = [];
+
         foreach ($queries as $key => [$query, $variables, $operationName]) {
             try {
                 if (empty($query)) {
                     throw new InvalidValueException('No GraphQL query was supplied');
                 }
                 $result[$key] = $gqlService->executeQuery($schema, $query, $variables, $operationName, App::devMode());
-            } catch (Throwable $e) {
-                Craft::$app->getErrorHandler()->logException($e);
+            } catch (InvalidValueException $e) {
                 $result[$key] = [
                     'errors' => [
                         [
-                            'message' => App::devMode() || $e instanceof InvalidValueException
-                                ? $e->getMessage()
-                                : Craft::t('app', 'Something went wrong when processing the GraphQL query.'),
+                            'message' => $e->getMessage(),
                         ],
+                    ],
+                ];
+            } catch (Throwable $e) {
+                /** @var ErrorHandler $errorHandler */
+                $errorHandler = Craft::$app->getErrorHandler();
+                $errorHandler->logException($e);
+                $result[$key] = [
+                    'errors' => [
+                        $errorHandler->showExceptionDetails()
+                            ? $errorHandler->exceptionAsArray($e)
+                            : ['message' => Craft::t('app', 'Something went wrong when processing the GraphQL query.')],
                     ],
                 ];
             }
@@ -222,37 +247,14 @@ class GraphqlController extends Controller
             return $schema;
         }
 
-        // Was a specific token passed?
-        $authHeaders = $requestHeaders->get('X-Craft-Authorization', null, false) ?? $requestHeaders->get('Authorization', null, false) ?? [];
-        foreach ($authHeaders as $authHeader) {
-            $authValues = array_map('trim', explode(',', $authHeader));
-            foreach ($authValues as $authValue) {
-                if (preg_match('/^Bearer\s+(.+)$/i', $authValue, $matches)) {
-                    try {
-                        $token = $gqlService->getTokenByAccessToken($matches[1]);
-                    } catch (InvalidArgumentException) {
-                    }
+        $token = $this->_token($gqlService);
 
-                    if (!isset($token) || !$token->getIsValid()) {
-                        throw new BadRequestHttpException('Invalid Authorization header');
-                    }
-
-                    break 2;
-                }
-            }
-        }
-
-        if (!isset($token)) {
-            // Get the public schema, if it exists & is valid
-            $token = $this->_publicToken($gqlService);
-
-            // If we couldn't find a token, then return the active schema if there is one, otherwise bail
-            if (!$token) {
-                try {
-                    return $gqlService->getActiveSchema();
-                } catch (GqlException) {
-                    throw new BadRequestHttpException('Missing Authorization header');
-                }
+        // If we couldn't find a token, then return the active schema if there is one, otherwise bail
+        if (!$token) {
+            try {
+                return $gqlService->getActiveSchema();
+            } catch (GqlException) {
+                throw new BadRequestHttpException('Missing Authorization header');
             }
         }
 
@@ -261,6 +263,27 @@ class GraphqlController extends Controller
         $gqlService->saveToken($token);
 
         return $token->getSchema();
+    }
+
+    private function _token(GqlService $gqlService): ?GqlToken
+    {
+        $bearerToken = $this->request->getBearerToken();
+
+        if ($bearerToken) {
+            try {
+                $token = $gqlService->getTokenByAccessToken($bearerToken);
+
+                if (!$token->getIsValid()) {
+                    throw new BadRequestHttpException('Invalid Authorization header');
+                }
+
+                return $token;
+            } catch (InvalidArgumentException) {
+            }
+        }
+
+        // Get the public schema, if it exists & is valid
+        return $this->_publicToken($gqlService);
     }
 
     /**
@@ -280,6 +303,45 @@ class GraphqlController extends Controller
         }
 
         return $token->getIsValid() ? $token : null;
+    }
+
+    /**
+     * Enforce site access based on used schema.
+     *
+     * @param GqlSchema $schema
+     * @return void
+     * @throws ForbiddenHttpException
+     * @throws \craft\errors\SiteNotFoundException
+     */
+    private function _enforceSiteAccess(GqlSchema $schema): void
+    {
+        $sitesService = Craft::$app->getSites();
+        $allowedSites = GqlHelper::getAllowedSites($schema);
+        $allowedSiteIds = array_flip(array_map(fn(Site $site) => $site->id, $allowedSites));
+
+        // check if schema has access to the current site
+        $currentSite = $sitesService->getCurrentSite();
+        if (isset($allowedSiteIds[$currentSite->id])) {
+            return;
+        }
+
+        // if not, check if it has access to the primary site (if different from the current site)
+        $primarySite = $sitesService->getPrimarySite();
+        if ($currentSite->id !== $primarySite->id && isset($allowedSiteIds[$primarySite->id])) {
+            $sitesService->setCurrentSite($primarySite);
+            return;
+        }
+
+        // otherwise, loop through all sites until we find one that the token has access to
+        foreach ($sitesService->getAllSites() as $site) {
+            if (isset($allowedSiteIds[$site->id])) {
+                $sitesService->setCurrentSite($site);
+                return;
+            }
+        }
+
+        // no allowed sites could be found, so throw a ForbiddenHttpException
+        throw new ForbiddenHttpException(sprintf('Schema doesn’t have access to the “%s” site.', $currentSite->getName()));
     }
 
     /**

@@ -7,7 +7,6 @@
 
 namespace craft\console\controllers;
 
-use Composer\IO\BufferIO;
 use Craft;
 use craft\console\Controller;
 use craft\elements\User;
@@ -43,6 +42,16 @@ class UpdateController extends Controller
     public $defaultAction = 'update';
 
     /**
+     * @var bool Whether to update expired licenses.
+     *
+     * NOTE: This will result in “License purchase required” messages in the control panel on public domains,
+     * until the licenses have been renewed.
+     *
+     * @since 4.8.0
+     */
+    public bool $withExpired = false;
+
+    /**
      * @var bool Force the update if allowUpdates is disabled
      */
     public bool $force = false;
@@ -65,6 +74,7 @@ class UpdateController extends Controller
         $options = parent::options($actionID);
 
         if ($actionID === 'update') {
+            $options[] = 'withExpired';
             $options[] = 'force';
             $options[] = 'backup';
             $options[] = 'migrate';
@@ -177,7 +187,7 @@ class UpdateController extends Controller
 
         // Run migrations?
         if (!$this->_migrate()) {
-            if ($this->_restoreDb()) {
+            if ($this->restore()) {
                 $this->_revertComposerChanges();
             }
             return ExitCode::UNSPECIFIED_ERROR;
@@ -195,14 +205,18 @@ class UpdateController extends Controller
     public function actionComposerInstall(): int
     {
         $this->stdout('Performing Composer install ... ', Console::FG_YELLOW);
-        $io = new BufferIO();
+        $output = '';
 
         try {
-            Craft::$app->getComposer()->install(null, $io);
+            Craft::$app->getComposer()->install(null, function($type, $buffer) use (&$output) {
+                if ($type === Process::OUT) {
+                    $output .= $buffer;
+                }
+            });
         } catch (Throwable $e) {
             Craft::$app->getErrorHandler()->logException($e);
             $this->stderr('error: ' . $e->getMessage() . PHP_EOL . PHP_EOL, Console::FG_RED);
-            $this->stdout('Output:' . PHP_EOL . PHP_EOL . $io->getOutput() . PHP_EOL . PHP_EOL);
+            $this->stdout('Output:' . PHP_EOL . PHP_EOL . $output . PHP_EOL . PHP_EOL);
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
@@ -336,8 +350,8 @@ class UpdateController extends Controller
      */
     private function _updateRequirements(array &$requirements, array &$info, string $handle, string $from, ?string $to, string $oldPackageName, Update $update): void
     {
-        if ($update->status === Update::STATUS_EXPIRED) {
-            $this->stdout("Skipping $handle because its license has expired." . PHP_EOL, Console::FG_GREY);
+        if ($update->status === Update::STATUS_EXPIRED && !$this->withExpired) {
+            $this->stdout($this->markdownToAnsi("Skipping `$handle` because its license has expired. Run with `--with-expired` to update anyway.") . PHP_EOL);
             return;
         }
 
@@ -374,16 +388,19 @@ class UpdateController extends Controller
     private function _performUpdate(array $requirements): bool
     {
         $this->stdout('Performing update with Composer ... ', Console::FG_YELLOW);
-        $io = new BufferIO();
-
         $composerService = Craft::$app->getComposer();
+        $output = '';
 
         try {
-            $composerService->install($requirements, $io);
+            $composerService->install($requirements, function($type, $buffer) use (&$output) {
+                if ($type === Process::OUT) {
+                    $output .= $buffer;
+                }
+            });
         } catch (Throwable $e) {
             Craft::$app->getErrorHandler()->logException($e);
             $this->stderr('error: ' . $e->getMessage() . PHP_EOL . PHP_EOL, Console::FG_RED);
-            $this->stdout('Output:' . PHP_EOL . PHP_EOL . $io->getOutput() . PHP_EOL . PHP_EOL);
+            $this->stdout('Output:' . PHP_EOL . PHP_EOL . $output . PHP_EOL . PHP_EOL);
             return false;
         }
 
@@ -415,41 +432,14 @@ class UpdateController extends Controller
 
         $this->stdout('Applying new migrations ... ', Console::FG_YELLOW);
 
-        $process = new Process([PHP_BINARY, $script, 'migrate/all', '--no-backup', '--no-content']);
+        $php = App::phpExecutable() ?? 'php';
+        $process = new Process([$php, $script, 'migrate/all', '--no-backup', '--no-content']);
         $process->setTimeout(null);
         try {
             $process->mustRun();
         } catch (ProcessFailedException $e) {
             $this->stderr('error: ' . $e->getMessage() . PHP_EOL . PHP_EOL, Console::FG_RED);
             $this->stdout('Output:' . PHP_EOL . PHP_EOL . $process->getOutput() . PHP_EOL . PHP_EOL);
-            return false;
-        }
-
-        $this->stdout('done' . PHP_EOL, Console::FG_GREEN);
-        return true;
-    }
-
-    /**
-     * Attempts to restore the database after a migration failure.
-     *
-     * @return bool
-     */
-    private function _restoreDb(): bool
-    {
-        if (
-            !$this->backupPath ||
-            ($this->interactive && !$this->confirm('Restore the database backup?', true))
-        ) {
-            return false;
-        }
-
-        $this->stdout('Restoring the database backup ... ', Console::FG_YELLOW);
-
-        try {
-            Craft::$app->getDb()->restore($this->backupPath);
-        } catch (Throwable $e) {
-            $this->stdout('error: ' . $e->getMessage() . PHP_EOL, Console::FG_RED);
-            $this->stdout('You can manually restore the backup file located at ' . $this->backupPath . PHP_EOL);
             return false;
         }
 
@@ -506,7 +496,8 @@ class UpdateController extends Controller
 
         $this->stdout('Reverting Composer changes ... ', Console::FG_YELLOW);
 
-        $process = new Process([PHP_BINARY, $script, 'update/composer-install']);
+        $php = App::phpExecutable() ?? 'php';
+        $process = new Process([$php, $script, 'update/composer-install']);
         $process->setTimeout(null);
         try {
             $process->mustRun();

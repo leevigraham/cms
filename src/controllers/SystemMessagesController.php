@@ -8,6 +8,7 @@
 namespace craft\controllers;
 
 use Craft;
+use craft\enums\CmsEdition;
 use craft\models\SystemMessage;
 use craft\web\Controller;
 use yii\web\Response;
@@ -27,12 +28,16 @@ class SystemMessagesController extends Controller
      */
     public function beforeAction($action): bool
     {
-        Craft::$app->requireEdition(Craft::Pro);
+        if (!parent::beforeAction($action)) {
+            return false;
+        }
+
+        Craft::$app->requireEdition(CmsEdition::Pro);
 
         // Make sure they have access to the System Messages utility
         $this->requirePermission('utility:system-messages');
 
-        return parent::beforeAction($action);
+        return true;
     }
 
     /**
