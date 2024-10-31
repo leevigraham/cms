@@ -4,6 +4,7 @@ namespace craft\elements;
 
 use CommerceGuys\Addressing\AddressFormat\AddressField;
 use CommerceGuys\Addressing\AddressInterface;
+use CommerceGuys\Addressing\Country\Country;
 use CommerceGuys\Addressing\Subdivision\SubdivisionUpdater;
 use Craft;
 use craft\base\Element;
@@ -366,6 +367,17 @@ class Address extends Element implements AddressInterface, NestedElementInterfac
     }
 
     /**
+     * Returns a [[Country]] object representing the address’ country.
+     *
+     * @return Country
+     * @since 5.3.0
+     */
+    public function getCountry(): Country
+    {
+        return Craft::$app->getAddresses()->getCountryRepository()->get($this->countryCode, Craft::$app->language);
+    }
+
+    /**
      * @inheritdoc
      */
     public function getAdministrativeArea(): ?string
@@ -466,7 +478,7 @@ class Address extends Element implements AddressInterface, NestedElementInterfac
      */
     public function getLocale(): string
     {
-        return 'und';
+        return Craft::$app->language;
     }
 
     /**

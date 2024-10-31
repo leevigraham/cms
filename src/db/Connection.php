@@ -222,9 +222,10 @@ class Connection extends \yii\db\Connection
     public function getBackupFilePath(): string
     {
         // Determine the backup file path
-        $systemName = mb_strtolower(FileHelper::sanitizeFilename(Craft::$app->getSystemName(), [
+        $systemName = FileHelper::sanitizeFilename(Craft::$app->getSystemName(), [
             'asciiOnly' => true,
-        ]));
+        ]);
+        $systemName = str_replace(['\'', '"'], '', strtolower($systemName));
         $version = Craft::$app->getInfo()->version ?? Craft::$app->getVersion();
         $filename = ($systemName ? "$systemName--" : '') . gmdate('Y-m-d-His') . "--v$version";
         $backupPath = Craft::$app->getPath()->getDbBackupPath();
@@ -281,12 +282,17 @@ class Connection extends \yii\db\Connection
      */
     public function backupTo(string $filePath): void
     {
+        $ignoreTables = $this->getIgnoredBackupTables();
+
         // Fire a 'beforeCreateBackup' event
-        $event = new BackupEvent([
-            'file' => $filePath,
-            'ignoreTables' => $this->getIgnoredBackupTables(),
-        ]);
-        $this->trigger(self::EVENT_BEFORE_CREATE_BACKUP, $event);
+        if ($this->hasEventHandlers(self::EVENT_BEFORE_CREATE_BACKUP)) {
+            $event = new BackupEvent([
+                'file' => $filePath,
+                'ignoreTables' => $ignoreTables,
+            ]);
+            $this->trigger(self::EVENT_BEFORE_CREATE_BACKUP, $event);
+            $ignoreTables = $event->ignoreTables;
+        }
 
         // Determine the command that should be executed
         $backupCommand = Craft::$app->getConfig()->getGeneral()->backupCommand;
@@ -294,7 +300,7 @@ class Connection extends \yii\db\Connection
         if ($backupCommand === false) {
             throw new Exception('Database not backed up because the backup command is false.');
         } elseif ($backupCommand === null || $backupCommand instanceof \Closure) {
-            $backupCommand = $this->getSchema()->getDefaultBackupCommand($event->ignoreTables);
+            $backupCommand = $this->getSchema()->getDefaultBackupCommand($ignoreTables);
         }
 
         // Create the shell command
@@ -317,8 +323,8 @@ class Connection extends \yii\db\Connection
 
             // Grab all .sql/.dump files in the backup folder.
             $files = array_merge(
-                glob($backupPath . DIRECTORY_SEPARATOR . "*.{$this->_getDumpExtension()}"),
-                glob($backupPath . DIRECTORY_SEPARATOR . "*.{$this->_getDumpExtension()}.zip"),
+                glob($backupPath . DIRECTORY_SEPARATOR . "*{$this->_getDumpExtension()}"),
+                glob($backupPath . DIRECTORY_SEPARATOR . "*{$this->_getDumpExtension()}.zip"),
             );
 
             // Sort them by file modified time descending (newest first).
@@ -469,6 +475,19 @@ class Connection extends \yii\db\Connection
         }
     }
 
+    private function _getDumpExtension(): string
+    {
+        $backupFormat = $this->getIsPgsql()
+            ? $this->getSchema()->getBackupFormat()
+            : null;
+
+        return match ($backupFormat) {
+            'custom', 'directory' => '.dump',
+            'tar' => '.tar',
+            default => '.sql',
+        };
+    }
+
     /**
      * @inheritdoc
      */
@@ -484,11 +503,6 @@ class Connection extends \yii\db\Connection
         }
 
         parent::trigger($name, $event);
-    }
-
-    private function _getDumpExtension(): string
-    {
-        return $this->getIsPgsql() && $this->getSchema()->usePgRestore() ? '.dump' : '.sql';
     }
 
     /**

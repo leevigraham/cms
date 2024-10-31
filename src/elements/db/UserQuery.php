@@ -13,23 +13,21 @@ use craft\db\QueryAbortedException;
 use craft\db\QueryParam;
 use craft\db\Table;
 use craft\elements\Address;
-use craft\elements\ElementCollection;
 use craft\elements\Entry;
 use craft\elements\User;
 use craft\enums\CmsEdition;
 use craft\helpers\Db;
 use craft\models\UserGroup;
-use yii\db\Connection;
 use yii\db\Expression;
 
 /**
  * UserQuery represents a SELECT SQL statement for users in a way that is independent of DBMS.
  *
+ * @template TKey of array-key
+ * @template TElement of User
+ * @extends ElementQuery<TKey,TElement>
+ *
  * @property-write string|string[]|UserGroup|null $group The user group(s) that resulting users must belong to
- * @method User[]|array all($db = null)
- * @method User|array|null one($db = null)
- * @method User|array|null nth(int $n, ?Connection $db = null)
- * @method ElementCollection<User> collect($db = null)
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
  * @doc-path users.md
@@ -366,7 +364,7 @@ class UserQuery extends ElementQuery
     /**
      * Narrows the query results to only users that have a certain user permission, either directly on the user account or through one of their user groups.
      *
-     * See [User Management](https://craftcms.com/docs/4.x/user-management.html) for a full list of available user permissions defined by Craft.
+     * See [User Management](https://craftcms.com/docs/5.x/system/user-management.html) for a full list of available user permissions defined by Craft.
      *
      * ---
      *
@@ -829,7 +827,7 @@ class UserQuery extends ElementQuery
 
         $this->joinElementTable(Table::USERS);
 
-        $this->query->select([
+        $this->query->addSelect([
             'users.photoId',
             'users.pending',
             'users.locked',
@@ -1070,7 +1068,7 @@ class UserQuery extends ElementQuery
         $elements = parent::afterPopulate($elements);
 
         // Eager-load user groups?
-        if ($this->withGroups && !$this->asArray && Craft::$app->edition === CmsEdition::Pro) {
+        if ($this->withGroups && !$this->asArray && Craft::$app->edition->value >= CmsEdition::Pro->value) {
             Craft::$app->getUserGroups()->eagerLoadGroups($elements);
         }
 

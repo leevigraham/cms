@@ -92,12 +92,9 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
             `> tbody > tr[data-id="${ev.data.id}"]`
           );
           if ($rows.length) {
-            const data = {
-              elementType: this.elementIndex.elementType,
-              source: this.elementIndex.sourceKey,
+            const data = Object.assign(this.elementIndex.getViewParams(), {
               id: ev.data.id,
-              siteId: this.elementIndex.siteId,
-            };
+            });
             Craft.sendActionRequest(
               'POST',
               'element-indexes/element-table-html',
@@ -105,9 +102,6 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
             ).then(({data}) => {
               for (let i = 0; i < $rows.length; i++) {
                 const $row = $rows.eq(i);
-                $row
-                  .find('> th[data-titlecell] .element')
-                  .replaceWith(data.elementHtml);
                 for (let attribute in data.attributeHtml) {
                   if (data.attributeHtml.hasOwnProperty(attribute)) {
                     $row
@@ -149,6 +143,8 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
 
       this.addListener(this.$saveBtn, 'activate', () => {
         this.$saveBtn.addClass('loading');
+        this.closeDateTimeFields();
+
         this.saveChanges()
           .then((data) => {
             if (data.errors) {
@@ -189,11 +185,20 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
       });
 
       this.addListener(this.$cancelBtn, 'activate', () => {
-        this.$cancelBtn.addClass('loading');
-        this.elementIndex.inlineEditing = false;
-        this.elementIndex.updateElements(true, false).then(() => {
-          this.elementIndex.$elements.removeClass('inline-editing');
-        });
+        if (
+          !this.getDeltaInputChanges() ||
+          confirm(
+            Craft.t('app', 'Are you sure you want to discard your changes?')
+          )
+        ) {
+          this.$cancelBtn.addClass('loading');
+          this.elementIndex.inlineEditing = false;
+          this.closeDateTimeFields();
+
+          this.elementIndex.updateElements(true, false).then(() => {
+            this.elementIndex.$elements.removeClass('inline-editing');
+          });
+        }
       });
 
       this.addListener(this.$elementContainer, 'keydown', (event) => {
@@ -225,6 +230,19 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
           this.elementIndex.$elements.addClass('inline-editing');
         });
       });
+    }
+  },
+
+  closeDateTimeFields: function () {
+    // ensure opened date/time pickers don't linger after activating the Cancel btn
+    this.elementIndex.$elements
+      .find('.datewrapper input')
+      .datepicker('destroy');
+
+    if ($().timepicker) {
+      this.elementIndex.$elements
+        .find('.timewrapper input')
+        .timepicker('remove');
     }
   },
 

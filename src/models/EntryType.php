@@ -265,13 +265,6 @@ JS, [
             'reservedWords' => ['id', 'dateCreated', 'dateUpdated', 'uid', 'title'],
         ];
         $rules[] = [
-            ['name'],
-            UniqueValidator::class,
-            'targetClass' => EntryTypeRecord::class,
-            'targetAttribute' => 'name',
-            'message' => Craft::t('yii', '{attribute} "{value}" has already been taken.'),
-        ];
-        $rules[] = [
             ['handle'],
             UniqueValidator::class,
             'targetClass' => EntryTypeRecord::class,
@@ -293,7 +286,11 @@ JS, [
         $fieldLayout = $this->getFieldLayout();
         $fieldLayout->reservedFieldHandles = [
             'author',
+            'authorId',
+            'authorIds',
+            'authors',
             'section',
+            'sectionId',
             'type',
         ];
 

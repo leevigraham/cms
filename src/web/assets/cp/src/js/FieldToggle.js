@@ -1,5 +1,7 @@
 /** global: Craft */
 /** global: Garnish */
+import postcssValueParser from 'tailwindcss/src/value-parser';
+
 /**
  * FieldToggle
  */
@@ -26,7 +28,11 @@ Craft.FieldToggle = Garnish.Base.extend({
 
     this.type = this.getType();
 
-    if (this.type === 'select' || this.type === 'fieldset') {
+    if (
+      this.type === 'select' ||
+      this.type === 'fieldset' ||
+      Garnish.hasAttr(this.$toggle, 'data-target-prefix')
+    ) {
       this.targetPrefix = this.$toggle.attr('data-target-prefix') || '';
     } else {
       this.targetSelector = this.normalizeTargetSelector(
@@ -88,9 +94,11 @@ Craft.FieldToggle = Garnish.Base.extend({
   },
 
   findTargets: function () {
-    if (this.type === 'select' || this.type === 'fieldset') {
+    if (this.targetPrefix !== null) {
       this._$target = $(
-        this.normalizeTargetSelector(this.targetPrefix + this.getToggleVal())
+        this.normalizeTargetSelector(
+          this.targetPrefix + (this.getToggleVal() || '')
+        )
       );
     } else {
       if (this.targetSelector) {
@@ -104,34 +112,36 @@ Craft.FieldToggle = Garnish.Base.extend({
   },
 
   getToggleVal: function () {
-    switch (this.type) {
-      case 'checkbox':
-        if (typeof this.$toggle.prop('checked') !== 'undefined') {
-          return this.$toggle.prop('checked');
-        }
-        return this.$toggle.attr('aria-checked') === 'true';
-
-      case 'booleanMenu':
-        const boolean = this.$toggle.data('boolean');
-        if (typeof boolean !== 'undefined') {
-          return boolean;
-        }
-        const val = this.$toggle.val();
-        return val && val !== '0';
-
-      default:
-        let postVal;
-        if (this.type === 'fieldset') {
-          postVal = this.$toggle.find('input:checked:first').val();
-        } else {
-          postVal = Garnish.getInputPostVal(this.$toggle);
-        }
-
-        // Normalize the value
-        return typeof postVal === 'undefined' || postVal === null
-          ? null
-          : postVal.replace(/[^\w]+/g, '-');
+    if (this.type === 'checkbox' && this.targetPrefix === null) {
+      if (typeof this.$toggle.prop('checked') !== 'undefined') {
+        return this.$toggle.prop('checked');
+      }
+      return this.$toggle.attr('aria-checked') === 'true';
     }
+
+    if (this.type === 'booleanMenu') {
+      const boolean = this.$toggle.data('boolean');
+      if (typeof boolean !== 'undefined') {
+        return boolean;
+      }
+      const val = this.$toggle.val();
+      return val && val !== '0';
+    }
+
+    if (this.type === 'fieldset') {
+      return this.normalizeToggleVal(
+        this.$toggle.find('input:checked:first').val()
+      );
+    }
+
+    return this.normalizeToggleVal(this.$toggle.val());
+  },
+
+  normalizeToggleVal: function (val) {
+    if (!val) {
+      return null;
+    }
+    return val.replace(/[^\w]+/g, '-');
   },
 
   onToggleChange: function () {
@@ -146,6 +156,8 @@ Craft.FieldToggle = Garnish.Base.extend({
         this.onToggleChange._show =
           this.$toggle.hasClass('collapsed') ||
           !this.$toggle.hasClass('expanded');
+      } else if (this.type === 'checkbox' && this.targetPrefix !== null) {
+        this.onToggleChange._show = this.$toggle.prop('checked');
       } else {
         this.onToggleChange._show = !!this.getToggleVal();
       }

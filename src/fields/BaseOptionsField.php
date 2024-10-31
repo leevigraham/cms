@@ -10,6 +10,7 @@ namespace craft\fields;
 use Craft;
 use craft\base\ElementInterface;
 use craft\base\Field;
+use craft\base\MergeableFieldInterface;
 use craft\base\PreviewableFieldInterface;
 use craft\db\QueryParam;
 use craft\events\DefineInputOptionsEvent;
@@ -32,7 +33,7 @@ use yii\db\Schema;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
  */
-abstract class BaseOptionsField extends Field implements PreviewableFieldInterface
+abstract class BaseOptionsField extends Field implements PreviewableFieldInterface, MergeableFieldInterface
 {
     /**
      * @event DefineInputOptionsEvent Event triggered when defining the options for the field's input.
@@ -359,9 +360,11 @@ abstract class BaseOptionsField extends Field implements PreviewableFieldInterfa
     {
         if ($value instanceof MultiOptionsFieldData) {
             $serialized = [];
-            foreach ($value as $selectedValue) {
-                /** @var OptionData $selectedValue */
-                $serialized[] = $selectedValue->value;
+            // Build the list out in the original option order
+            foreach ($value->getOptions() as $option) {
+                if ($option->selected) {
+                    $serialized[] = $option->value;
+                }
             }
             return $serialized;
         }
@@ -562,6 +565,7 @@ abstract class BaseOptionsField extends Field implements PreviewableFieldInterfa
         $options = $this->options();
         $translatedOptions = [];
 
+        // Fire a 'defineOptions' event
         if ($this->hasEventHandlers(self::EVENT_DEFINE_OPTIONS)) {
             $event = new DefineInputOptionsEvent([
                 'options' => $options,

@@ -13,6 +13,8 @@ use craft\base\Element;
 use craft\base\ElementContainerFieldInterface;
 use craft\base\ElementInterface;
 use craft\base\Field;
+use craft\base\FieldInterface;
+use craft\base\MergeableFieldInterface;
 use craft\base\NestedElementInterface;
 use craft\behaviors\EventBehavior;
 use craft\db\Query;
@@ -33,6 +35,7 @@ use craft\gql\arguments\elements\Address as AddressArguments;
 use craft\gql\interfaces\elements\Address as AddressGqlInterface;
 use craft\gql\resolvers\elements\Address as AddressResolver;
 use craft\gql\types\input\Addresses as AddressesInput;
+use craft\helpers\Db;
 use craft\helpers\Gql;
 use craft\helpers\StringHelper;
 use craft\services\Elements;
@@ -49,7 +52,8 @@ use yii\db\Expression;
  */
 class Addresses extends Field implements
     ElementContainerFieldInterface,
-    EagerLoadingFieldInterface
+    EagerLoadingFieldInterface,
+    MergeableFieldInterface
 {
     public const VIEW_MODE_CARDS = 'cards';
     public const VIEW_MODE_INDEX = 'index';
@@ -308,13 +312,7 @@ class Addresses extends Field implements
      */
     public function canDeleteElementForSite(NestedElementInterface $element, User $user): ?bool
     {
-        $owner = $element->getOwner();
-        if (!Craft::$app->getElements()->canSave($owner, $user)) {
-            return false;
-        }
-
-        // Make sure we aren't hitting the Min Addresses limit
-        return !$this->minAddressesReached($owner);
+        return false;
     }
 
     private function minAddressesReached(ElementInterface $owner): bool
@@ -661,6 +659,9 @@ class Addresses extends Field implements
         $config += [
             'allowedViewModes' => [ElementIndexViewMode::Cards],
             'pageSize' => $this->pageSize ?? 50,
+            // addresses don't have drafts, but in this particular context we need to allow drafts,
+            // so that addresses show while adding them via slideout in the element index view mode
+            'canHaveDrafts' => true,
         ];
 
         return $this->addressManager()->getIndexHtml($owner, $config);
@@ -695,9 +696,14 @@ class Addresses extends Field implements
         $value = $element->getFieldValue($this->handle);
 
         if ($value instanceof AddressQuery) {
-            $addresses = $value->getCachedResult() ?? (clone $value)->status(null)->limit(null)->all();
+            $addresses = $value->getCachedResult() ?? (clone $value)
+                ->drafts(null)
+                ->savedDraftsOnly()
+                ->status(null)
+                ->limit(null)
+                ->all();
 
-            $allAddressesValidate = true;
+            $invalidAddressIds = [];
             $scenario = $element->getScenario();
 
             foreach ($addresses as $i => $address) {
@@ -710,14 +716,20 @@ class Addresses extends Field implements
                 }
 
                 if (!$address->validate()) {
-                    $element->addModelErrors($address, "$this->handle[$i]");
-                    $allAddressesValidate = false;
+                    $invalidAddressIds[] = $address->id;
                 }
             }
 
-            if (!$allAddressesValidate) {
+            if (!empty($invalidAddressIds)) {
                 // Just in case the addresses weren't already cached
                 $value->setCachedResult($addresses);
+                $element->addInvalidNestedElementIds($invalidAddressIds);
+
+                // show a top level error to let users know that there are validation errors in the nested entries
+                $element->addError($this->handle, Craft::t('app', 'Validation errors found in {count, plural, =1{one address} other{{count, spellout} addresses}} within the *{fieldName}* field; please fix them.', [
+                    'count' => count($invalidAddressIds),
+                    'fieldName' => $this->getUiLabel(),
+                ]));
             }
         } else {
             $addresses = $value->all();
@@ -792,6 +804,15 @@ class Addresses extends Field implements
                 'allowOwnerRevisions' => true,
             ],
         ];
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function afterMergeFrom(FieldInterface $outgoingField): void
+    {
+        Db::update(DbTable::ADDRESSES, ['fieldId' => $this->id], ['fieldId' => $outgoingField->id]);
+        parent::afterMergeFrom($outgoingField);
     }
 
     /**

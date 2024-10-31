@@ -12,6 +12,7 @@ use craft\base\conditions\ConditionInterface;
 use craft\elements\conditions\ElementConditionInterface;
 use craft\elements\conditions\users\UserCondition;
 use craft\elements\User;
+use craft\events\DefineShowFieldLayoutComponentInFormEvent;
 use craft\helpers\Cp;
 use craft\models\FieldLayout;
 
@@ -26,6 +27,13 @@ use craft\models\FieldLayout;
  */
 abstract class FieldLayoutComponent extends Model
 {
+    /**
+     * @event DefineShowFieldLayoutComponentInFormEvent The event that is triggered when determining whether the component should be shown in a field layout.
+     * @see showInForm()
+     * @since 5.3.0
+     */
+    public const EVENT_DEFINE_SHOW_IN_FORM = 'defineShowInForm';
+
     /**
      * @var UserCondition
      */
@@ -70,7 +78,7 @@ abstract class FieldLayoutComponent extends Model
      * @var string|null The element type the field layout is for
      * @since 5.0.0
      */
-    public ?string $elementType;
+    public ?string $elementType = null;
 
     /**
      * @var FieldLayout The field layout tab this element belongs to
@@ -318,6 +326,18 @@ abstract class FieldLayoutComponent extends Model
      */
     public function showInForm(?ElementInterface $element = null): bool
     {
+        // Fire a 'defineShowInForm' event
+        if ($this->hasEventHandlers(self::EVENT_DEFINE_SHOW_IN_FORM)) {
+            $event = new DefineShowFieldLayoutComponentInFormEvent([
+                'fieldLayout' => $this->getLayout(),
+                'element' => $element,
+            ]);
+            $this->trigger(self::EVENT_DEFINE_SHOW_IN_FORM, $event);
+            if (!$event->showInForm || $event->handled) {
+                return $event->showInForm;
+            }
+        }
+
         if ($this->conditional()) {
             $userCondition = $this->getUserCondition();
             $elementCondition = $this->getElementCondition();

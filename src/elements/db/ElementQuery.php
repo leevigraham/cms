@@ -56,6 +56,10 @@ use yii\db\QueryBuilder;
 /**
  * ElementQuery represents a SELECT SQL statement for elements in a way that is independent of DBMS.
  *
+ * @template TKey of array-key
+ * @template TElement of ElementInterface
+ * @extends Query<TKey,TElement>
+ *
  * @property-write string|string[]|Site $site The site(s) that resulting elements must be returned in
  * @mixin CustomFieldBehavior
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
@@ -110,7 +114,7 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @var string The name of the [[ElementInterface]] class.
-     * @phpstan-var class-string<ElementInterface>
+     * @phpstan-var class-string<TElement>
      */
     public string $elementType;
 
@@ -181,6 +185,8 @@ class ElementQuery extends Query implements ElementQueryInterface
      * This can be set to one of the following:
      *
      * - A source element ID – matches drafts of that element
+     * - A source element
+     *  - An array of source elements or element IDs
      * - `'*'` – matches drafts of any source element
      * - `false` – matches unpublished drafts that have no source element
      *
@@ -317,11 +323,21 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var mixed The element relation criteria.
      *
-     * See [Relations](https://craftcms.com/docs/4.x/relations.html) for supported syntax options.
+     * See [Relations](https://craftcms.com/docs/5.x/system/relations.html) for supported syntax options.
      *
      * @used-by relatedTo()
      */
     public mixed $relatedTo = null;
+
+    /**
+     * @var mixed The element relation criteria.
+     *
+     * See [Relations](https://craftcms.com/docs/5.x/system/relations.html) for supported syntax options.
+     *
+     * @used-by notRelatedTo()
+     * @since 5.4.0
+     */
+    public mixed $notRelatedTo = null;
 
     /**
      * @var mixed The title that resulting elements must have.
@@ -344,7 +360,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var mixed The search term to filter the resulting elements by.
      *
-     * See [Searching](https://craftcms.com/docs/4.x/searching.html) for supported syntax options.
+     * See [Searching](https://craftcms.com/docs/5.x/system/searching.html) for supported syntax options.
      *
      * @used-by ElementQuery::search()
      */
@@ -373,7 +389,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * @var string|array|null The eager-loading declaration.
      *
-     * See [Eager-Loading Elements](https://craftcms.com/docs/4.x/dev/eager-loading-elements.html) for supported syntax options.
+     * See [Eager-Loading Elements](https://craftcms.com/docs/5.x/development/eager-loading.html) for supported syntax options.
      *
      * @used-by with()
      * @used-by andWith()
@@ -405,6 +421,13 @@ class ElementQuery extends Query implements ElementQueryInterface
      * @since 5.0.0
      */
     public bool $eagerly = false;
+
+    /**
+     * @var bool Whether custom fields should be factored into the query.
+     * @used-by withCustomFields()
+     * @since 5.2.0
+     */
+    public bool $withCustomFields = true;
 
     // Structure parameters
     // -------------------------------------------------------------------------
@@ -557,7 +580,7 @@ class ElementQuery extends Query implements ElementQueryInterface
      * Constructor
      *
      * @param string $elementType The element type class associated with this query
-     * @phpstan-param class-string<ElementInterface> $elementType
+     * @phpstan-param class-string<TElement> $elementType
      * @param array $config Configurations to be applied to the newly created query object
      */
     public function __construct(string $elementType, array $config = [])
@@ -690,11 +713,27 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     public function draftOf($value): static
     {
+        $valid = false;
         if ($value instanceof ElementInterface) {
             $this->draftOf = $value->getCanonicalId();
-        } elseif (is_numeric($value) || $value === '*' || $value === false || $value === null) {
+            $valid = true;
+        } elseif (
+            is_numeric($value) ||
+            (is_array($value) && ArrayHelper::isNumeric($value)) ||
+            $value === '*' ||
+            $value === false ||
+            $value === null
+        ) {
             $this->draftOf = $value;
-        } else {
+            $valid = true;
+        } elseif (is_array($value) && !empty($value)) {
+            $c = Collection::make($value);
+            if ($c->every(fn($v) => $v instanceof ElementInterface || is_numeric($v))) {
+                $this->draftOf = $c->map(fn($v) => $v instanceof ElementInterface ? $v->id : $v)->all();
+                $valid = true;
+            }
+        }
+        if (!$valid) {
             throw new InvalidArgumentException('Invalid draftOf value');
         }
         if ($value !== null && $this->drafts === false) {
@@ -1053,6 +1092,33 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @inheritdoc
+     * @uses $notRelatedTo
+     * @since 5.4.0
+     */
+    public function notRelatedTo($value): static
+    {
+        $this->notRelatedTo = $value;
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     * @uses $notRelatedTo
+     * @since 5.4.0
+     */
+    public function andNotRelatedTo($value): static
+    {
+        $relatedTo = $this->_andRelatedToCriteria($value, $this->notRelatedTo);
+
+        if ($relatedTo === false) {
+            return $this;
+        }
+
+        return $this->notRelatedTo($relatedTo);
+    }
+
+    /**
+     * @inheritdoc
      * @uses $relatedTo
      */
     public function relatedTo($value): static
@@ -1068,16 +1134,33 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     public function andRelatedTo($value): static
     {
-        if (!$value) {
+        $relatedTo = $this->_andRelatedToCriteria($value, $this->relatedTo);
+
+        if ($relatedTo === false) {
             return $this;
         }
 
-        if (!$this->relatedTo) {
-            return $this->relatedTo($value);
+        return $this->relatedTo($relatedTo);
+    }
+
+    /**
+     * @param $value
+     * @param $currentValue
+     * @return mixed
+     * @throws NotSupportedException
+     */
+    private function _andRelatedToCriteria($value, $currentValue): mixed
+    {
+        if (!$value) {
+            return false;
+        }
+
+        if (!$currentValue) {
+            return $value;
         }
 
         // Normalize so element/targetElement/sourceElement values get pushed down to the 2nd level
-        $relatedTo = ElementRelationParamParser::normalizeRelatedToParam($this->relatedTo);
+        $relatedTo = ElementRelationParamParser::normalizeRelatedToParam($currentValue);
         $criteriaCount = count($relatedTo) - 1;
 
         // Not possible to switch from `or` to `and` if there are multiple criteria
@@ -1087,7 +1170,8 @@ class ElementQuery extends Query implements ElementQueryInterface
 
         $relatedTo[0] = $criteriaCount > 0 ? 'and' : 'or';
         $relatedTo[] = ElementRelationParamParser::normalizeRelatedToCriteria($value);
-        return $this->relatedTo($relatedTo);
+
+        return $relatedTo;
     }
 
     /**
@@ -1184,6 +1268,16 @@ class ElementQuery extends Query implements ElementQueryInterface
     {
         $this->eagerly = $value !== false;
         $this->eagerLoadAlias = is_string($value) ? $value : null;
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     * @uses $withCustomFields
+     */
+    public function withCustomFields(bool $value = true): static
+    {
+        $this->withCustomFields = $value;
         return $this;
     }
 
@@ -1607,6 +1701,7 @@ class ElementQuery extends Query implements ElementQueryInterface
         }
 
         $this->_applyRelatedToParam();
+        $this->_applyNotRelatedToParam();
         $this->_applyStructureParams($class);
         $this->_applyRevisionParams();
         $this->_applySearchParam();
@@ -1646,7 +1741,7 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @inheritdoc
-     * @return ElementInterface[]|array The resulting elements.
+     * @return TElement[]|array The resulting elements.
      */
     public function populate($rows): array
     {
@@ -1657,8 +1752,11 @@ class ElementQuery extends Query implements ElementQueryInterface
         // Should we set a search score on the elements?
         if (isset($this->_searchResults)) {
             foreach ($rows as &$row) {
-                if (isset($row['id'], $this->_searchResults[$row['id']])) {
-                    $row['searchScore'] = (int)round($this->_searchResults[$row['id']]);
+                if (isset($row['id'], $row['siteId'])) {
+                    $key = sprintf('%s-%s', $row['id'], $row['siteId']);
+                    if (isset($this->_searchResults[$key])) {
+                        $row['searchScore'] = (int)round($this->_searchResults[$key]);
+                    }
                 }
             }
         }
@@ -1724,7 +1822,7 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @inheritdoc
-     * @return ElementInterface[]|array
+     * @return TElement[]|array
      */
     public function all($db = null): array
     {
@@ -1741,11 +1839,10 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @param YiiConnection|null $db
-     * @return ElementCollection
+     * @return ElementCollection<TKey,TElement>
      */
     public function collect(?YiiConnection $db = null): ElementCollection
     {
-        /** @phpstan-ignore-next-line */
         return $this->eagerLoad() ?? ElementCollection::make($this->all($db));
     }
 
@@ -1755,14 +1852,7 @@ class ElementQuery extends Query implements ElementQueryInterface
             return null;
         }
 
-        if (isset($this->eagerLoadAlias)) {
-            $alias = $this->eagerLoadAlias;
-        } else {
-            $alias = $this->eagerLoadHandle;
-            if (str_contains($alias, ':')) {
-                $alias = explode(':', $alias, 2)[1];
-            }
-        }
+        $alias = $this->eagerLoadAlias ?? "eagerly:$this->eagerLoadHandle";
 
         // see if it was already eager-loaded
         $eagerLoaded = match ($count) {
@@ -1796,7 +1886,7 @@ class ElementQuery extends Query implements ElementQueryInterface
 
     /**
      * @inheritdoc
-     * @return ElementInterface|array|null
+     * @return TElement|array|null
      */
     public function one($db = null): mixed
     {
@@ -1849,12 +1939,39 @@ class ElementQuery extends Query implements ElementQueryInterface
         if ($cachedResult !== null) {
             return !empty($cachedResult);
         }
+
+        if (
+            !$this->distinct
+            && empty($this->groupBy)
+            && empty($this->having)
+            && empty($this->union)
+        ) {
+            try {
+                $subquery = $this->prepareSubquery();
+
+                // If distinct, et al. were set by prepare(), don't mess with it
+                // see https://github.com/craftcms/cms/issues/15001#issuecomment-2174563927
+                if (
+                    !$subquery->distinct
+                    && empty($subquery->groupBy)
+                    && empty($subquery->having)
+                    && empty($subquery->union)
+                ) {
+                    return $subquery
+                        ->select('elements.id')
+                        ->exists($db);
+                }
+            } catch (QueryAbortedException) {
+                return false;
+            }
+        }
+
         return parent::exists($db);
     }
 
     /**
      * @inheritdoc
-     * @return ElementInterface|array|null
+     * @return TElement|array|null
      */
     public function nth(int $n, ?YiiConnection $db = null): mixed
     {
@@ -1908,7 +2025,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     /**
      * Returns the resulting elements set by [[setCachedResult()]], if the criteria params haven’t changed since then.
      *
-     * @return ElementInterface[]|null $elements The resulting elements, or null if setCachedResult() was never called or the criteria has changed
+     * @return TElement[]|null $elements The resulting elements, or null if setCachedResult() was never called or the criteria has changed
      * @see setCachedResult()
      */
     public function getCachedResult(): ?array
@@ -1932,7 +2049,7 @@ class ElementQuery extends Query implements ElementQueryInterface
      * If this is called, [[all()]] will return these elements rather than initiating a new SQL query,
      * as long as none of the parameters have changed since setCachedResult() was called.
      *
-     * @param ElementInterface[] $elements The resulting elements.
+     * @param TElement[] $elements The resulting elements.
      * @see getCachedResult()
      */
     public function setCachedResult(array $elements): void
@@ -1942,7 +2059,7 @@ class ElementQuery extends Query implements ElementQueryInterface
     }
 
     /**
-     * Clears the [cached result](https://craftcms.com/docs/4.x/element-queries.html#cache).
+     * Clears the [cached result](https://craftcms.com/docs/5.x/development/element-queries.html#cache).
      *
      * @see getCachedResult()
      * @see setCachedResult()
@@ -2040,33 +2157,45 @@ class ElementQuery extends Query implements ElementQueryInterface
             && empty($this->having)
             && empty($this->union)
         ) {
-            $select = $this->select;
+            // Set $orderBy, $limit, and $offset on this query just so it more closely resembles the
+            // actual query that will be executed for `beforePrepare`/`afterPrepare` listeners
+            // (https://github.com/craftcms/cms/issues/15001)
+
+            // DON’T set $select though, in case this query ends up being cloned and executed from
+            // an event handler, like BaseRelationField does. (https://github.com/craftcms/cms/issues/15071)
+
             $order = $this->orderBy;
             $limit = $this->limit;
             $offset = $this->offset;
 
-            $this->select = [$selectExpression];
             $this->orderBy = null;
             $this->limit = null;
             $this->offset = null;
 
             try {
                 $subquery = $this->prepareSubquery();
-                $subquery->select = [$selectExpression];
-                $subquery->orderBy = null;
-                $subquery->limit = null;
-                $subquery->offset = null;
-                $command = $subquery->createCommand($db);
+
+                // If distinct, et al. were set by prepare(), don't mess with it
+                // see https://github.com/craftcms/cms/issues/15001#issuecomment-2174563927
+                if (
+                    !$subquery->distinct
+                    && empty($subquery->groupBy)
+                    && empty($subquery->having)
+                    && empty($subquery->union)
+                ) {
+                    $subquery->select = [$selectExpression];
+                    $subquery->orderBy = null;
+                    $subquery->limit = null;
+                    $subquery->offset = null;
+                    return $subquery->createCommand($db)->queryScalar();
+                }
             } catch (QueryAbortedException) {
                 return false;
             } finally {
-                $this->select = $select;
                 $this->orderBy = $order;
                 $this->limit = $limit;
                 $this->offset = $offset;
             }
-
-            return $command->queryScalar();
         }
 
         return parent::queryScalar($selectExpression, $db);
@@ -2118,10 +2247,10 @@ class ElementQuery extends Query implements ElementQueryInterface
         $vars = array_keys(Craft::getObjectVars($this));
         $behavior = $this->getBehavior('customFields');
         $behaviorVars = array_keys(Craft::getObjectVars($behavior));
-        $fields = array_merge(
-            array_combine($vars, $vars),
-            array_combine($behaviorVars, array_map(fn(string $var) => fn() => $behavior->$var, $behaviorVars))
-        );
+        // if using an array_merge here, reverse the order so that the $behaviorVars go before $vars;
+        // the properties ($var) have to take priority over custom fields ($behaviorVars);
+        $fields = array_combine($vars, $vars) +
+            array_combine($behaviorVars, array_map(fn(string $var) => fn() => $behavior->$var, $behaviorVars));
         unset($fields['query'], $fields['subQuery'], $fields['owner']);
         return $fields;
     }
@@ -2222,7 +2351,6 @@ class ElementQuery extends Query implements ElementQueryInterface
                 'row' => $row,
             ]);
             $this->trigger(self::EVENT_BEFORE_POPULATE_ELEMENT, $event);
-
             $row = $event->row ?? $row;
             if (isset($event->element)) {
                 $element = $event->element;
@@ -2263,10 +2391,14 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     protected function beforePrepare(): bool
     {
-        $event = new CancelableEvent();
-        $this->trigger(self::EVENT_BEFORE_PREPARE, $event);
+        // Fire a 'beforePrepare' event
+        if ($this->hasEventHandlers(self::EVENT_BEFORE_PREPARE)) {
+            $event = new CancelableEvent();
+            $this->trigger(self::EVENT_BEFORE_PREPARE, $event);
+            return $event->isValid;
+        }
 
-        return $event->isValid;
+        return true;
     }
 
     /**
@@ -2281,11 +2413,13 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     protected function afterPrepare(): bool
     {
-        $event = new CancelableEvent();
-        $this->trigger(self::EVENT_AFTER_PREPARE, $event);
-
-        if (!$event->isValid) {
-            return false;
+        // Fire an 'afterPrepare' event
+        if ($this->hasEventHandlers(self::EVENT_AFTER_PREPARE)) {
+            $event = new CancelableEvent();
+            $this->trigger(self::EVENT_AFTER_PREPARE, $event);
+            if (!$event->isValid) {
+                return false;
+            }
         }
 
         $elementsService = Craft::$app->getElements();
@@ -2313,10 +2447,9 @@ class ElementQuery extends Query implements ElementQueryInterface
             } else {
                 $queryTags = $this->cacheTags();
 
+                // Fire a 'defineCacheTags' event
                 if ($this->hasEventHandlers(self::EVENT_DEFINE_CACHE_TAGS)) {
-                    $event = new DefineValueEvent([
-                        'value' => $queryTags,
-                    ]);
+                    $event = new DefineValueEvent(['value' => $queryTags]);
                     $this->trigger(self::EVENT_DEFINE_CACHE_TAGS, $event);
                     $queryTags = $event->value;
                 }
@@ -2368,6 +2501,9 @@ class ElementQuery extends Query implements ElementQueryInterface
      */
     protected function customFields(): array
     {
+        if (!$this->withCustomFields) {
+            return [];
+        }
         $fields = [];
         foreach ($this->fieldLayouts() as $fieldLayout) {
             array_push($fields, ...$fieldLayout->getCustomFields());
@@ -2513,10 +2649,10 @@ class ElementQuery extends Query implements ElementQueryInterface
 
             // Group the fields by handle and field UUID
             /** @var FieldInterface[][][] $fieldsByHandle */
-            $fieldsByHandle = ArrayHelper::index($this->customFields, null, [
-                fn(FieldInterface $field) => $field->handle,
-                fn(FieldInterface $field) => $field->uid,
-            ]);
+            $fieldsByHandle = [];
+            foreach ($this->customFields as $field) {
+                $fieldsByHandle[$field->handle][$field->uid][] = $field;
+            }
 
             foreach ($fieldsByHandle as $handle => $instancesByUid) {
                 // In theory all field handles will be accounted for on the CustomFieldBehavior, but just to be safe...
@@ -2634,6 +2770,38 @@ class ElementQuery extends Query implements ElementQueryInterface
         if ($condition === false) {
             throw new QueryAbortedException();
         }
+
+        $this->subQuery->andWhere($condition);
+    }
+
+    /**
+     * Applies the 'notRelatedTo' param to the query being prepared.
+     *
+     * @throws QueryAbortedException
+     */
+    private function _applyNotRelatedToParam(): void
+    {
+        if (!$this->notRelatedTo) {
+            return;
+        }
+
+        $notRelatedToParam = $this->notRelatedTo;
+
+        $parser = new ElementRelationParamParser([
+            'fields' => $this->customFields ? ArrayHelper::index(
+                $this->customFields,
+                fn(FieldInterface $field) => $field->layoutElement?->getOriginalHandle() ?? $field->handle,
+            ) : [],
+        ]);
+        $condition = $parser->parse($notRelatedToParam, $this->siteId !== '*' ? $this->siteId : null);
+
+        if ($condition === false) {
+            // just don't modify the query
+            return;
+        }
+
+        // Prepend `not` as this is not expect to be provided
+        $condition = ['not', $condition];
 
         $this->subQuery->andWhere($condition);
     }

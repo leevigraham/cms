@@ -53,6 +53,8 @@ Craft.PreviewFileModal = Garnish.Modal.extend(
         )
       );
 
+      Craft.cp.announce(Craft.t('app', 'Loading'));
+
       // Cut the flicker, just show the nice person the preview.
       this.$container.velocity('stop');
       this.$container.show().css('opacity', 1);
@@ -141,7 +143,7 @@ Craft.PreviewFileModal = Garnish.Modal.extend(
       if ($element) {
         this.elementSelect.focusItem($element);
       } else if (this.$triggerElement && this.$triggerElement.length) {
-        this.$triggerElement.trigger('focus');
+        this.$triggerElement.focus();
       }
 
       this.destroy();

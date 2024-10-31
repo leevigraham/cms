@@ -13,7 +13,6 @@ use craft\base\ElementInterface;
 use craft\db\Query;
 use craft\db\QueryAbortedException;
 use craft\db\Table;
-use craft\elements\ElementCollection;
 use craft\elements\Entry;
 use craft\enums\CmsEdition;
 use craft\helpers\ArrayHelper;
@@ -26,18 +25,17 @@ use DateTime;
 use Illuminate\Support\Collection;
 use yii\base\InvalidArgumentException;
 use yii\base\InvalidConfigException;
-use yii\db\Connection;
 
 /**
  * EntryQuery represents a SELECT SQL statement for entries in a way that is independent of DBMS.
  *
+ * @template TKey of array-key
+ * @template TElement of Entry
+ * @extends ElementQuery<TKey,TElement>
+ *
  * @property-write string|string[]|EntryType|null $type The entry type(s) that resulting entries must have
  * @property-write string|string[]|Section|null $section The section(s) that resulting entries must belong to
  * @property-write string|string[]|UserGroup|null $authorGroup The user group(s) that resulting entries’ authors must belong to
- * @method Entry[]|array all($db = null)
- * @method Entry|array|null one($db = null)
- * @method Entry|array|null nth(int $n, ?Connection $db = null)
- * @method ElementCollection<Entry> collect($db = null)
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.0.0
  * @doc-path entries.md
@@ -55,7 +53,7 @@ use yii\db\Connection;
  * @replace {myElement} myEntry
  * @replace {element-class} \craft\elements\Entry
  */
-class EntryQuery extends ElementQuery
+class EntryQuery extends ElementQuery implements NestedElementQueryInterface
 {
     // General parameters
     // -------------------------------------------------------------------------
@@ -344,6 +342,7 @@ class EntryQuery extends ElementQuery
      * | `['foo', 'bar']` | in a section with a handle of `foo` or `bar`.
      * | `['not', 'foo', 'bar']` | not in a section with a handle of `foo` or `bar`.
      * | a [[Section|Section]] object | in a section represented by the object.
+     * | `'*'` | in any section.
      *
      * ---
      *
@@ -380,6 +379,8 @@ class EntryQuery extends ElementQuery
             } else {
                 $this->withStructure = false;
             }
+        } elseif ($value === '*') {
+            $this->sectionId = Craft::$app->getEntries()->getAllSectionIds();
         } elseif (Db::normalizeParam($value, function($item) {
             if (is_string($item)) {
                 $item = Craft::$app->getEntries()->getSectionByHandle($item);
@@ -437,34 +438,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on the field the entries are contained by.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches {elements}…
-     * | - | -
-     * | `'foo'` | in a field with a handle of `foo`.
-     * | `['foo', 'bar']` | in a field with a handle of `foo` or `bar`.
-     * | a [[craft\fields\Matrix]] object | in a field represented by the object.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch {elements} in the Foo field #}
-     * {% set {elements-var} = {twig-method}
-     *   .field('foo')
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch {elements} in the Foo field
-     * ${elements-var} = {php-method}
-     *     ->field('foo')
-     *     ->all();
-     * ```
-     *
-     * @param mixed $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $fieldId
      * @since 5.0.0
      */
@@ -485,35 +459,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on the field the entries are contained by, per the fields’ IDs.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches entries…
-     * | - | -
-     * | `1` | in a field with an ID of 1.
-     * | `'not 1'` | not in a field with an ID of 1.
-     * | `[1, 2]` | in a field with an ID of 1 or 2.
-     * | `['not', 1, 2]` | not in a field with an ID of 1 or 2.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch entries in the field with an ID of 1 #}
-     * {% set {elements-var} = {twig-method}
-     *   .fieldId(1)
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch entries in the field with an ID of 1
-     * ${elements-var} = {php-method}
-     *     ->fieldId(1)
-     *     ->all();
-     * ```
-     *
-     * @param mixed $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $fieldId
      * @since 5.0.0
      */
@@ -524,35 +470,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on the primary owner element of the entries, per the owners’ IDs.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches entries…
-     * | - | -
-     * | `1` | created for an element with an ID of 1.
-     * | `'not 1'` | not created for an element with an ID of 1.
-     * | `[1, 2]` | created for an element with an ID of 1 or 2.
-     * | `['not', 1, 2]` | not created for an element with an ID of 1 or 2.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch entries created for an element with an ID of 1 #}
-     * {% set {elements-var} = {twig-method}
-     *   .primaryOwnerId(1)
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch entries created for an element with an ID of 1
-     * ${elements-var} = {php-method}
-     *     ->primaryOwnerId(1)
-     *     ->all();
-     * ```
-     *
-     * @param mixed $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $primaryOwnerId
      * @since 5.0.0
      */
@@ -563,26 +481,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Sets the [[primaryOwnerId()]] and [[siteId()]] parameters based on a given element.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch entries created for this entry #}
-     * {% set {elements-var} = {twig-method}
-     *   .primaryOwner(myEntry)
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch entries created for this entry
-     * ${elements-var} = {php-method}
-     *     ->primaryOwner($myEntry)
-     *     ->all();
-     * ```
-     *
-     * @param ElementInterface $primaryOwner The primary owner element
-     * @return static self reference
+     * @inheritdoc
      * @uses $primaryOwnerId
      * @since 5.0.0
      */
@@ -594,35 +493,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on the owner element of the entries, per the owners’ IDs.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches entries…
-     * | - | -
-     * | `1` | created for an element with an ID of 1.
-     * | `'not 1'` | not created for an element with an ID of 1.
-     * | `[1, 2]` | created for an element with an ID of 1 or 2.
-     * | `['not', 1, 2]` | not created for an element with an ID of 1 or 2.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch entries created for an element with an ID of 1 #}
-     * {% set {elements-var} = {twig-method}
-     *   .ownerId(1)
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch entries created for an element with an ID of 1
-     * ${elements-var} = {php-method}
-     *     ->ownerId(1)
-     *     ->all();
-     * ```
-     *
-     * @param mixed $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $ownerId
      * @since 5.0.0
      */
@@ -633,26 +504,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Sets the [[ownerId()]] and [[siteId()]] parameters based on a given element.
-     *
-     * ---
-     *
-     * ```twig
-     * {# Fetch entries created for this entry #}
-     * {% set {elements-var} = {twig-method}
-     *   .owner(myEntry)
-     *   .all() %}
-     * ```
-     *
-     * ```php
-     * // Fetch entries created for this entry
-     * ${elements-var} = {php-method}
-     *     ->owner($myEntry)
-     *     ->all();
-     * ```
-     *
-     * @param ElementInterface $owner The owner element
-     * @return static self reference
+     * @inheritdoc
      * @uses $ownerId
      * @since 5.0.0
      */
@@ -664,17 +516,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on whether the entries’ owners are drafts.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches entries…
-     * | - | -
-     * | `true` | which can belong to a draft.
-     * | `false` | which cannot belong to a draft.
-     *
-     * @param bool|null $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $allowOwnerDrafts
      * @since 5.0.0
      */
@@ -685,17 +527,7 @@ class EntryQuery extends ElementQuery
     }
 
     /**
-     * Narrows the query results based on whether the entries’ owners are revisions.
-     *
-     * Possible values include:
-     *
-     * | Value | Fetches entries…
-     * | - | -
-     * | `true` | which can belong to a revision.
-     * | `false` | which cannot belong to a revision.
-     *
-     * @param bool|null $value The property value
-     * @return static self reference
+     * @inheritdoc
      * @uses $allowOwnerRevisions
      * @since 5.0.0
      */

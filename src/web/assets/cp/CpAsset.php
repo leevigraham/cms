@@ -23,12 +23,12 @@ use craft\helpers\UrlHelper;
 use craft\i18n\Locale;
 use craft\models\Section;
 use craft\services\Sites;
+use craft\utilities\QueueManager;
 use craft\validators\UserPasswordValidator;
 use craft\web\AssetBundle;
 use craft\web\assets\axios\AxiosAsset;
 use craft\web\assets\d3\D3Asset;
 use craft\web\assets\datepickeri18n\DatepickerI18nAsset;
-use craft\web\assets\elementresizedetector\ElementResizeDetectorAsset;
 use craft\web\assets\fabric\FabricAsset;
 use craft\web\assets\fileupload\FileUploadAsset;
 use craft\web\assets\garnish\GarnishAsset;
@@ -61,7 +61,6 @@ class CpAsset extends AssetBundle
         TailwindResetAsset::class,
         AxiosAsset::class,
         D3Asset::class,
-        ElementResizeDetectorAsset::class,
         GarnishAsset::class,
         JqueryAsset::class,
         JqueryTouchEventsAsset::class,
@@ -130,6 +129,7 @@ JS;
             'Are you sure you want to close the editor? Any changes will be lost.',
             'Are you sure you want to close this screen? Any changes will be lost.',
             'Are you sure you want to delete this image?',
+            'Are you sure you want to delete this {type}?',
             'Are you sure you want to delete “{name}”?',
             'Are you sure you want to discard your changes?',
             'Are you sure you want to transfer your license to this domain?',
@@ -163,6 +163,7 @@ JS;
             'Couldn’t reorder items.',
             'Couldn’t save new order.',
             'Create',
+            'Create {type}',
             'Customize sources',
             'Default Sort',
             'Default Table Columns',
@@ -179,6 +180,7 @@ JS;
             'Device type',
             'Discard changes',
             'Discard',
+            'Display as cards',
             'Display as thumbnails',
             'Display in a structured table',
             'Display in a table',
@@ -197,6 +199,7 @@ JS;
             'Enter the name of the folder',
             'Enter your password to log back in.',
             'Error',
+            'Existing {type}',
             'Export Type',
             'Export',
             'Export…',
@@ -234,6 +237,7 @@ JS;
             'License transferred.',
             'Limit',
             'Loading',
+            'Loading complete',
             'Make not required',
             'Make optional',
             'Make required',
@@ -262,6 +266,7 @@ JS;
             'New entry in the {section} section',
             'New entry, choose a section',
             'New field',
+            'New file uploaded.',
             'New heading',
             'New order saved.',
             'New position saved.',
@@ -304,7 +309,8 @@ JS;
             'Rotate',
             'Row could not be added. Maximum number of rows reached.',
             'Row could not be deleted. Minimum number of rows reached.',
-            'Save as a new asset',
+            'Row {index}',
+            'Save as a new {type}',
             'Save',
             'Saved {timestamp} by {creator}',
             'Saved {timestamp}',
@@ -376,6 +382,8 @@ JS;
             'Use for element thumbnails',
             'User Groups',
             'View in a new tab',
+            'View in a new tab',
+            'View settings',
             'View',
             'Volume path',
             'Warning',
@@ -387,15 +395,12 @@ JS;
             'Your changes have been stored.',
             'Your session will expire in {time}.',
             'by {creator}',
-            'category',
             'day',
             'days',
             'draft',
             'element',
-            'entry',
             'files',
             'folders',
-            'global set',
             'hour',
             'hours',
             'minute',
@@ -411,6 +416,7 @@ JS;
             '{name} active, more info',
             '{name} folder',
             '{name} sorted by {attribute}, {direction}',
+            '{num, number} {num, plural, =1{result} other{results}}',
             '{num, number} {num, plural, =1{Available Update} other{Available Updates}}',
             '{num, number} {num, plural, =1{degree} other{degrees}}',
             '{num, number} {num, plural, =1{notification} other{notifications}}',
@@ -443,9 +449,10 @@ JS;
         $primarySite = $upToDate ? $sitesService->getPrimarySite() : null;
 
         $data = [
-            'Pro' => CmsEdition::Pro->value,
-            'Team' => CmsEdition::Team->value,
             'Solo' => CmsEdition::Solo->value,
+            'Team' => CmsEdition::Team->value,
+            'Pro' => CmsEdition::Pro->value,
+            'Enterprise' => CmsEdition::Enterprise->value,
             'actionTrigger' => $generalConfig->actionTrigger,
             'actionUrl' => UrlHelper::actionUrl(),
             'announcements' => $upToDate ? Craft::$app->getAnnouncements()->get() : [],
@@ -513,7 +520,7 @@ JS;
             'appId' => Craft::$app->id,
             'autofocusPreferred' => $currentUser->getAutofocusPreferred(),
             'autosaveDrafts' => $generalConfig->autosaveDrafts,
-            'canAccessQueueManager' => $userSession->checkPermission('utility:queue-manager'),
+            'canAccessQueueManager' => Craft::$app->getUtilities()->checkAuthorization(QueueManager::class),
             'dataAttributes' => Html::$dataAttributes,
             'defaultIndexCriteria' => [],
             'disableAutofocus' => (bool)($currentUser->getPreference('disableAutofocus') ?? false),

@@ -280,7 +280,7 @@ class ProjectConfig extends Component
     private array $_configFileList = [];
 
     /**
-     * @var int|null The project config cache duration. If null, the <config4:cacheDuration> config setting will be used.
+     * @var int|null The project config cache duration. If null, the <config5:cacheDuration> config setting will be used.
      * @since 4.5.0
      */
     public ?int $cacheDuration = null;
@@ -886,14 +886,11 @@ class ProjectConfig extends Component
     protected function removeInternalConfigValuesByPaths(array $paths): void
     {
         $chunks = array_chunk($paths, 1000);
-        $db = Craft::$app->getDb();
-        $db->transaction(function() use ($chunks, $db) {
-            foreach ($chunks as $chunk) {
-                Db::delete(Table::PROJECTCONFIG, [
-                    'path' => $chunk,
-                ], db: $db);
-            }
-        });
+        foreach ($chunks as $chunk) {
+            Db::delete(Table::PROJECTCONFIG, [
+                'path' => $chunk,
+            ]);
+        }
     }
 
     /**
@@ -942,7 +939,7 @@ class ProjectConfig extends Component
      * Get the list of applied changes
      *
      * @return array
-     * @since 4.9.0
+     * @since 5.1.0
      */
     public function getAppliedChanges(): array
     {
@@ -1248,16 +1245,17 @@ class ProjectConfig extends Component
         $config[self::PATH_VOLUMES] = $this->_getVolumeData();
 
         // Fire a 'rebuild' event
-        $event = new RebuildConfigEvent([
-            'config' => $config,
-        ]);
-        $this->trigger(self::EVENT_REBUILD, $event);
+        if ($this->hasEventHandlers(self::EVENT_REBUILD)) {
+            $event = new RebuildConfigEvent(['config' => $config]);
+            $this->trigger(self::EVENT_REBUILD, $event);
+            $config = $event->config;
+        }
 
         // Reset the component name map
         $this->_setInternal(self::PATH_META_NAMES, [], updateTimestamp: false, force: true);
 
         // Process the changes
-        foreach ($event->config as $path => $value) {
+        foreach ($config as $path => $value) {
             $this->_setInternal($path, $value, 'Project config rebuild', updateTimestamp: false, force: true);
         }
 

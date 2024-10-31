@@ -12,9 +12,21 @@
  * @example <craft-element-label><a href="#" class="label-link">Label</a></craft-element-label>
  */
 class CraftElementLabel extends HTMLElement {
-  connectedCallback() {
-    this.labelLink = this.querySelector('.label-link');
+  constructor() {
+    super();
     this.tooltip = null;
+    this.$tabs = null;
+    this.disabled = false;
+  }
+
+  get labelLink() {
+    return this.querySelector('.label-link');
+  }
+
+  connectedCallback() {
+    if (this.hasAttribute('disabled')) {
+      return;
+    }
 
     if (!this.labelLink) {
       console.warn('No label link found in craft-element-label.');
@@ -64,8 +76,9 @@ class CraftElementLabel extends HTMLElement {
 
   createTooltip() {
     this.tooltip = document.createElement('craft-tooltip');
+    this.tooltip.setAttribute('self-managed', 'true');
+    this.tooltip.setAttribute('aria-label', this.innerText);
     this.tooltip.setAttribute('aria-hidden', 'true');
-    this.tooltip.innerText = this.innerText;
 
     // If there's a context label, make it a little nicer
     const contextLabel = this.querySelector('.context-label');
@@ -81,7 +94,9 @@ class CraftElementLabel extends HTMLElement {
 
   disconnectedCallback() {
     this.tooltip?.remove();
-    this.$tabs.data('tabs')?.off('selectTab');
+    if (this.$tabs?.length) {
+      this.$tabs.data('tabs')?.off('selectTab');
+    }
   }
 
   calculateWidth(text) {
@@ -92,7 +107,7 @@ class CraftElementLabel extends HTMLElement {
       whiteSpace: 'nowrap',
       fontFamily: 'inherit',
     });
-    tag.innerHTML = text;
+    tag.innerText = text;
 
     this.appendChild(tag);
     const result = tag.clientWidth;

@@ -63,7 +63,7 @@ class ResaveElements extends BaseBatchedElementJob
 
     /**
      * @var bool Whether the [[set]] attribute should only be set if the current value doesn’t validate.
-     * @since 4.9.0
+     * @since 5.1.0
      */
     public bool $ifInvalid = false;
 
@@ -122,6 +122,7 @@ class ResaveElements extends BaseBatchedElementJob
             Craft::$app->getElements()->saveElement($item,
                 updateSearchIndex: $this->updateSearchIndex,
                 forceTouch: $this->touch,
+                saveContent: true,
             );
         } catch (Throwable $e) {
             Craft::$app->getErrorHandler()->logException($e);

@@ -97,7 +97,8 @@ class Html extends \yii\helpers\Html
     public static function csrfInput(array $options = []): string
     {
         $request = Craft::$app->getRequest();
-        $async = (bool)(ArrayHelper::remove($options, 'async') ?? Craft::$app->getConfig()->getGeneral()->asyncCsrfInputs);
+        $async = ArrayHelper::remove($options, 'async')
+            ?? ($request->getIsSiteRequest() && Craft::$app->getConfig()->getGeneral()->asyncCsrfInputs);
 
         if (!$async) {
             Craft::$app->getResponse()->setNoCacheHeaders();
@@ -686,13 +687,11 @@ class Html extends \yii\helpers\Html
     {
         // Ignore if it looks like a placeholder
         // or starts with a placeholder (e.g. widgets > __NAMESPACE__-fieldId)
-        if (preg_match('/^__[A-Z_]+__(-)?/', $id)) {
+        if (preg_match('/^__[A-Z_]+__/', $id)) {
             return $id;
         }
 
-        // IDs must begin with a letter
-        $id = preg_replace('/^[^A-Za-z]+/', '', $id);
-        $id = rtrim(preg_replace('/[^A-Za-z0-9_.]+/', '-', $id), '-');
+        $id = trim(preg_replace('/[^A-Za-z0-9_.]+/', '-', $id), '-');
         return $id ?: StringHelper::randomString(10);
     }
 
@@ -1019,11 +1018,28 @@ class Html extends \yii\helpers\Html
             throw new InvalidArgumentException("Invalid file path: $file");
         }
 
+        $file = FileHelper::absolutePath(Craft::getAlias($file), '/');
+
+        // make sure it's contained within the project rot
+        $rootPath = FileHelper::absolutePath(Craft::getAlias('@root'), '/');
+        if (!str_starts_with($file, "$rootPath/")) {
+            throw new InvalidArgumentException(sprintf('%s cannot be passed a path outside of the project root.', __METHOD__));
+        }
+
+        if (Craft::$app->getSecurity()->isSystemDir(dirname($file))) {
+            throw new InvalidArgumentException(sprintf('%s cannot be passed a path within or above system directories.', __METHOD__));
+        }
+
+        $ext = pathinfo($file, PATHINFO_EXTENSION);
+        if (strtolower($ext) === 'php') {
+            throw new InvalidArgumentException(sprintf('%s cannot be passed a path to a PHP file.', __METHOD__));
+        }
+
         if ($mimeType === null) {
             try {
                 $mimeType = FileHelper::getMimeType($file);
             } catch (Throwable $e) {
-                Craft::warning("Unable to determine the MIME type for $file: " . $e->getMessage());
+                Craft::warning("Unable to determine the MIME type for $file: " . $e->getMessage(), __METHOD__);
                 Craft::$app->getErrorHandler()->logException($e);
             }
         }

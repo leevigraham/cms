@@ -15,6 +15,7 @@ use craft\helpers\Json;
 use craft\models\EntryType;
 use craft\models\FieldLayout;
 use craft\services\ProjectConfig;
+use yii\db\Exception as DbException;
 use yii\helpers\Inflector;
 
 /**
@@ -97,6 +98,7 @@ class m230617_070415_entrify_matrix_blocks extends Migration
                     'handle' => $this->uniqueHandle($blockTypeConfig['handle'], $entryTypeHandles),
                     'hasTitleField' => false,
                     'titleFormat' => null,
+                    'showSlugField' => false,
                 ]);
 
                 $fieldLayoutUid = ArrayHelper::firstKey($blockTypeConfig['fieldLayouts'] ?? []);
@@ -193,6 +195,18 @@ class m230617_070415_entrify_matrix_blocks extends Migration
         }
 
         if (!empty($typeIdMap)) {
+            // disable FK checks for all of this
+            try {
+                $this->db->transaction(function() {
+                    $this->db->createCommand()->checkIntegrity(false)->execute();
+                });
+                $disabledFkChecks = true;
+            } catch (DbException) {
+                // the DB user probably didn't have permission
+                // see https://github.com/craftcms/cms/issues/15063#issuecomment-2194059768
+                $disabledFkChecks = false;
+            };
+
             // entrify the Matrix blocks
             $typeIdSql = 'CASE';
             foreach ($typeIdMap as $oldId => $newId) {
@@ -240,6 +254,10 @@ SQL,
                 ['type' => 'craft\elements\MatrixBlock'],
                 updateTimestamp: false,
             );
+
+            if ($disabledFkChecks) {
+                $this->db->createCommand()->checkIntegrity(true)->execute();
+            }
         }
 
         // drop the old Matrix tables

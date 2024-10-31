@@ -81,7 +81,10 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
             throw new InvalidConfigException("Invalid element type: $elementType");
         }
 
-        $this->elementType = $elementType;
+        if ($elementType !== null) {
+            $this->elementType = $elementType;
+        }
+
         parent::__construct($config);
     }
 
@@ -137,8 +140,12 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
         // Make sure the rule doesn't conflict with the existing params
         $queryParams = array_merge($this->queryParams);
         foreach ($this->getConditionRules() as $existingRule) {
-            /** @var ElementConditionRuleInterface $existingRule */
-            array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
+            try {
+                /** @var ElementConditionRuleInterface $existingRule */
+                array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
+            } catch (InvalidConfigException) {
+                return false;
+            }
         }
 
         $queryParams = array_flip($queryParams);
@@ -161,6 +168,7 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
             DateCreatedConditionRule::class,
             DateUpdatedConditionRule::class,
             IdConditionRule::class,
+            NotRelatedToConditionRule::class,
             RelatedToConditionRule::class,
             SlugConditionRule::class,
         ];
@@ -171,6 +179,10 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
 
         if (Craft::$app->getIsMultiSite() && (!$elementType || $elementType::isLocalized())) {
             $types[] = SiteConditionRule::class;
+
+            if (count(Craft::$app->getSites()->getAllGroups()) > 1) {
+                $types[] = SiteGroupConditionRule::class;
+            }
         }
 
         if ($elementType !== null) {
@@ -187,13 +199,11 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
                 $types[] = TitleConditionRule::class;
             }
 
-            $fieldLabels = [];
-
             foreach ($this->getFieldLayouts() as $fieldLayout) {
                 foreach ($fieldLayout->getCustomFieldElements() as $layoutElement) {
-                    // Discard fields with empty/non-unique labels
+                    // Discard fields with empty labels
                     $label = $layoutElement->label();
-                    if ($label === null || isset($fieldLabels[$label])) {
+                    if ($label === null) {
                         continue;
                     }
                     $field = $layoutElement->getField();
@@ -201,8 +211,6 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
                     if ($type === null) {
                         continue;
                     }
-
-                    $fieldLabels[$label] = true;
 
                     if (is_string($type)) {
                         $type = ['class' => $type];

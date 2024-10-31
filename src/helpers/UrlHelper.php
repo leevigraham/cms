@@ -8,7 +8,9 @@
 namespace craft\helpers;
 
 use Craft;
+use craft\console\Request as ConsoleRequest;
 use craft\errors\SiteNotFoundException;
+use craft\web\Request as WebRequest;
 use yii\base\Exception;
 
 /**
@@ -77,6 +79,8 @@ class UrlHelper
 
     /**
      * Returns a query string based on the given params.
+     *
+     * Param values will be encoded, except for `/`, `{`, and `}` characters.
      *
      * @param array $params
      * @return string
@@ -207,7 +211,7 @@ class UrlHelper
     }
 
     /**
-     * Encodes a URL’s query string params.
+     * Encodes a URL’s query string param values, except for `/`, `{`, and `}` characters.
      *
      * @param string $url
      * @return string
@@ -504,8 +508,17 @@ class UrlHelper
             return rtrim($generalConfig->baseCpUrl, '/') . '/';
         }
 
-        // Use @web as a fallback
-        return Craft::getAlias('@web');
+        return self::fallbackBaseUrl();
+    }
+
+    private static function fallbackBaseUrl(WebRequest|ConsoleRequest|null $request = null): string
+    {
+        $request ??= Craft::$app->getRequest();
+        // Use @web as a fallback, unless it's a console request and @web was defined dynamically,
+        // in which case it's totally unreliable so go with the base site URL
+        return $request->getIsConsoleRequest() && $request->isWebAliasSetDynamically
+            ? static::baseSiteUrl()
+            : Craft::getAlias('@web');
     }
 
     /**
@@ -619,12 +632,25 @@ class UrlHelper
                 $params['site'] = Cp::requestedSite()->handle;
             }
         } else {
-            // token/siteToken params
-            if ($addToken && !isset($params[$generalConfig->tokenParam]) && ($token = $request->getToken()) !== null) {
-                $params[$generalConfig->tokenParam] = $token;
-            }
+            // token/siteToken/preview params
             if (!isset($params[$generalConfig->siteToken]) && ($siteToken = $request->getSiteToken()) !== null) {
                 $params[$generalConfig->siteToken] = $siteToken;
+            }
+            if ($request->getIsSiteRequest()) {
+                if ($addToken && !isset($params[$generalConfig->tokenParam]) && ($token = $request->getToken()) !== null) {
+                    $params[$generalConfig->tokenParam] = $token;
+                }
+                if (
+                    !isset($params['x-craft-preview']) &&
+                    !isset($params['x-craft-live-preview']) &&
+                    $request->getIsPreview()
+                ) {
+                    if (($previewToken = $request->getQueryParam('x-craft-preview')) !== null) {
+                        $params['x-craft-preview'] = $previewToken;
+                    } elseif (($previewToken = $request->getQueryParam('x-craft-live-preview')) !== null) {
+                        $params['x-craft-live-preview'] = $previewToken;
+                    }
+                }
             }
         }
 
@@ -633,7 +659,7 @@ class UrlHelper
         }
 
         if ($useRequestHostInfo) {
-            $baseUrl = Craft::getAlias('@web');
+            $baseUrl = self::fallbackBaseUrl($request);
         } elseif ($showScriptName) {
             $baseUrl = $request->getIsConsoleRequest() ? '/' : static::host();
         } elseif ($cpUrl) {

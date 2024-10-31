@@ -12,6 +12,7 @@ use craft\base\Chippable;
 use craft\base\ElementInterface;
 use craft\base\Iconic;
 use craft\base\UtilityInterface;
+use craft\elements\db\NestedElementQueryInterface;
 use craft\enums\CmsEdition;
 use craft\enums\LicenseKeyStatus;
 use craft\errors\BusyResourceException;
@@ -22,13 +23,16 @@ use craft\helpers\App;
 use craft\helpers\ArrayHelper;
 use craft\helpers\Cp;
 use craft\helpers\DateTimeHelper;
+use craft\helpers\ElementHelper;
 use craft\helpers\Html;
 use craft\helpers\Json;
 use craft\helpers\Search;
+use craft\helpers\Session;
 use craft\helpers\Update as UpdateHelper;
 use craft\helpers\UrlHelper;
 use craft\models\Update;
 use craft\models\Updates;
+use craft\utilities\Updates as UpdatesUtility;
 use craft\web\Controller;
 use craft\web\ServiceUnavailableHttpException;
 use DateInterval;
@@ -102,6 +106,9 @@ class AppController extends Controller
             throw new BadRequestHttpException("$url does not appear to be a resource URL");
         }
 
+        // Close the PHP session in case this takes a while
+        Session::close();
+
         $response = Craft::createGuzzleClient()->get($url);
         $this->response->setCacheHeaders();
         $this->response->getHeaders()->set('content-type', 'application/javascript');
@@ -149,9 +156,11 @@ class AppController extends Controller
     {
         $this->requireAcceptsJson();
 
-        // Require either the 'performUpdates' or 'utility:updates' permission
-        $userSession = Craft::$app->getUser();
-        if (!$userSession->checkPermission('performUpdates') && !$userSession->checkPermission('utility:updates')) {
+        // Require either the 'performUpdates' permission or access to the Updates utility
+        if (
+            !Craft::$app->getUser()->checkPermission('performUpdates') &&
+            !Craft::$app->getUtilities()->checkAuthorization(UpdatesUtility::class)
+        ) {
             throw new ForbiddenHttpException('User is not permitted to perform this action');
         }
 
@@ -179,9 +188,11 @@ class AppController extends Controller
     {
         $this->requireAcceptsJson();
 
-        // Require either the 'performUpdates' or 'utility:updates' permission
-        $userSession = Craft::$app->getUser();
-        if (!$userSession->checkPermission('performUpdates') && !$userSession->checkPermission('utility:updates')) {
+        // Require either the 'performUpdates' permission or access to the Updates utility
+        if (
+            !Craft::$app->getUser()->checkPermission('performUpdates') &&
+            !Craft::$app->getUtilities()->checkAuthorization(UpdatesUtility::class)
+        ) {
             throw new ForbiddenHttpException('User is not permitted to perform this action');
         }
 
@@ -751,6 +762,7 @@ class AppController extends Controller
             /** @var string|ElementInterface $elementType */
             $elementType = $criterion['type'];
             $id = $criterion['id'];
+            $ownerId = $criterion['ownerId'] ?? null;
             $siteId = $criterion['siteId'];
             $instances = $criterion['instances'];
 
@@ -758,21 +770,29 @@ class AppController extends Controller
                 throw new BadRequestHttpException('Invalid element ID');
             }
 
-            $elements = $elementType::find()
+            $query = $elementType::find()
                 ->id($id)
                 ->fixedOrder()
                 ->drafts(null)
-                ->provisionalDrafts(null)
                 ->revisions(null)
                 ->siteId($siteId)
-                ->status(null)
-                ->all();
+                ->status(null);
+
+            if ($query instanceof NestedElementQueryInterface) {
+                $query->ownerId($ownerId);
+            }
+
+            $elements = $query->all();
+
+            // See if there are any provisional drafts we should swap these out with
+            ElementHelper::swapInProvisionalDrafts($elements);
 
             foreach ($elements as $element) {
                 foreach ($instances as $key => $instance) {
+                    $id = $element->isProvisionalDraft ? $element->getCanonicalId() : $element->id;
                     /** @var 'chip'|'card' $ui */
                     $ui = $instance['ui'] ?? 'chip';
-                    $elementHtml[$element->id][$key] = match ($ui) {
+                    $elementHtml[$id][$key] = match ($ui) {
                         'chip' => Cp::elementChipHtml($element, $instance),
                         'card' => Cp::elementCardHtml($element, $instance),
                     };
@@ -864,11 +884,12 @@ class AppController extends Controller
         $this->requireAcceptsJson();
 
         $search = $this->request->getRequiredBodyParam('search');
+        $freeOnly = (bool)($this->request->getBodyParam('freeOnly') ?? false);
         $noSearch = $search === '';
 
         if ($noSearch) {
             $cache = Craft::$app->getCache();
-            $cacheKey = 'icon-picker-options-list-html';
+            $cacheKey = sprintf('icon-picker-options-list-html%s', $freeOnly ? ':free' : '');
             $listHtml = $cache->get($cacheKey);
             if ($listHtml !== false) {
                 return $this->asJson([
@@ -886,6 +907,10 @@ class AppController extends Controller
         $scores = [];
 
         foreach ($icons as $name => $icon) {
+            if ($freeOnly && $icon['pro']) {
+                continue;
+            }
+
             if ($searchTerms) {
                 $score = $this->matchTerms($searchTerms, $icon['name']) * 5 + $this->matchTerms($searchTerms, $icon['terms']);
                 if ($score === 0) {
