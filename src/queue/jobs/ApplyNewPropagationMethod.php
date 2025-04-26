@@ -32,8 +32,7 @@ use Throwable;
 class ApplyNewPropagationMethod extends BaseBatchedElementJob
 {
     /**
-     * @var string The element type to use
-     * @phpstan-var class-string<ElementInterface>
+     * @var class-string<ElementInterface> The element type to use
      */
     public string $elementType;
 
@@ -51,10 +50,7 @@ class ApplyNewPropagationMethod extends BaseBatchedElementJob
      */
     protected function loadData(): Batchable
     {
-        /** @var string|ElementInterface $elementType */
-        /** @phpstan-var class-string<ElementInterface>|ElementInterface $elementType */
-        $elementType = $this->elementType;
-        $query = $elementType::find()
+        $query = $this->elementType::find()
             ->site('*')
             ->preferSites([Craft::$app->getSites()->getPrimarySite()->id])
             ->unique()
@@ -103,7 +99,7 @@ class ApplyNewPropagationMethod extends BaseBatchedElementJob
         }
 
         // Load the element in any sites that it's about to be deleted for
-        $otherSiteElements = $item::find()
+        $query = $item::find()
             ->id($item->id)
             ->siteId($otherSiteIds)
             ->structureId($item->structureId)
@@ -111,8 +107,13 @@ class ApplyNewPropagationMethod extends BaseBatchedElementJob
             ->drafts(null)
             ->provisionalDrafts(null)
             ->orderBy([])
-            ->indexBy('siteId')
-            ->all();
+            ->indexBy('siteId');
+
+        if (!empty($this->criteria)) {
+            Craft::configure($query, $this->criteria);
+        }
+
+        $otherSiteElements = $query->all();
 
         if (empty($otherSiteElements)) {
             return;

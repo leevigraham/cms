@@ -26,8 +26,7 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
     public bool $sortable = false;
 
     /**
-     * @var string|null The element type being queried.
-     * @phpstan-var class-string<ElementInterface>|null
+     * @var class-string<ElementInterface>|null The element type being queried.
      */
     public ?string $elementType = null;
 
@@ -65,13 +64,12 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
     /**
      * Constructor.
      *
-     * @param string|null $elementType
-     * @phpstan-param class-string<ElementInterface>|null $elementType
+     * @param class-string<ElementInterface>|null $elementType
      * @param array $config
      */
     public function __construct(?string $elementType = null, array $config = [])
     {
-        $elementType = $elementType ?? $config['elementType'] ?? $config['attributes']['elementType'] ?? null;
+        $elementType ??= $config['elementType'] ?? $config['attributes']['elementType'] ?? null;
         unset($config['elementType'], $config['attributes']['elementType']);
 
         if (
@@ -140,12 +138,8 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
         // Make sure the rule doesn't conflict with the existing params
         $queryParams = array_merge($this->queryParams);
         foreach ($this->getConditionRules() as $existingRule) {
-            try {
-                /** @var ElementConditionRuleInterface $existingRule */
-                array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
-            } catch (InvalidConfigException) {
-                return false;
-            }
+            /** @var ElementConditionRuleInterface $existingRule */
+            array_push($queryParams, ...$existingRule->getExclusiveQueryParams());
         }
 
         $queryParams = array_flip($queryParams);
@@ -173,29 +167,26 @@ class ElementCondition extends BaseCondition implements ElementConditionInterfac
             SlugConditionRule::class,
         ];
 
-        /** @var string|ElementInterface|null $elementType */
-        /** @phpstan-var class-string<ElementInterface>|ElementInterface|null $elementType */
-        $elementType = $this->elementType;
-
-        if (Craft::$app->getIsMultiSite() && (!$elementType || $elementType::isLocalized())) {
+        if (Craft::$app->getIsMultiSite() && ($this->elementType === null || $this->elementType::isLocalized())) {
             $types[] = SiteConditionRule::class;
+            $types[] = LanguageConditionRule::class;
 
             if (count(Craft::$app->getSites()->getAllGroups()) > 1) {
                 $types[] = SiteGroupConditionRule::class;
             }
         }
 
-        if ($elementType !== null) {
-            if ($elementType::hasUris()) {
+        if ($this->elementType !== null) {
+            if ($this->elementType::hasUris()) {
                 $types[] = HasUrlConditionRule::class;
                 $types[] = UriConditionRule::class;
             }
 
-            if ($elementType::hasStatuses()) {
+            if ($this->elementType::hasStatuses()) {
                 $types[] = StatusConditionRule::class;
             }
 
-            if ($elementType::hasTitles()) {
+            if ($this->elementType::hasTitles()) {
                 $types[] = TitleConditionRule::class;
             }
 

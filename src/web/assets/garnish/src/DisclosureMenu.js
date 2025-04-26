@@ -13,6 +13,7 @@ export default Base.extend(
     $container: null,
     $alignmentElement: null,
     $nextFocusableElement: null,
+    $searchInput: null,
 
     _viewportWidth: null,
     _viewportHeight: null,
@@ -89,7 +90,75 @@ export default Base.extend(
       }
       this.addDisclosureMenuEventListeners();
 
+      // add a search input?
+      this.settings.withSearchInput =
+        this.settings.withSearchInput ||
+        Garnish.hasAttr(this.$container, 'data-with-search-input');
+      if (this.settings.withSearchInput) {
+        this.addSearchInput();
+      }
+
       Garnish.DisclosureMenu.instances.push(this);
+    },
+
+    addSearchInput: function () {
+      const $outerContainer = $('<div/>', {
+        class: 'search-container',
+      }).prependTo(this.$container);
+      const $innerContainer = $('<div/>', {
+        class: 'texticon search icon clearable',
+      }).appendTo($outerContainer);
+      this.$searchInput = $('<input/>', {
+        class: 'fullwidth text',
+        type: 'text',
+        inputmode: 'search',
+        autocomplete: 'off',
+        placeholder: Craft.t('app', 'Search'),
+      }).appendTo($innerContainer);
+      const $clearBtn = $('<div/>', {
+        class: 'clear-btn hidden',
+        title: Craft.t('app', 'Clear'),
+        'aria-label': Craft.t('app', 'Clear'),
+      }).appendTo($innerContainer);
+
+      this.$searchInput.on('input', (ev) => {
+        const val = this.$searchInput.val().toLowerCase().replace(/['"]/g, '');
+        const $options = this.$container.find('li');
+
+        if (val) {
+          $clearBtn.removeClass('hidden');
+          let $matches = $();
+          $options.each((i, option) => {
+            const $option = $(option);
+            if ($option.text().toLowerCase().includes(val)) {
+              $matches = $matches.add($option);
+            }
+          });
+          $matches.removeClass('filtered');
+          $options.not($matches).addClass('filtered');
+        } else {
+          $clearBtn.addClass('hidden');
+          $options.removeClass('filtered');
+        }
+
+        this.setContainerPosition();
+      });
+
+      this.addListener(this.$searchInput, 'keydown', (ev) => {
+        switch (ev.keyCode) {
+          case Garnish.ESC_KEY:
+            this.$searchInput.val('').trigger('input');
+            break;
+          case Garnish.RETURN_KEY:
+            // they most likely don't want to submit the form from here
+            ev.preventDefault();
+            break;
+        }
+      });
+
+      this.addListener($clearBtn, 'click', () => {
+        this.$searchInput.val('').trigger('input').focus();
+      });
     },
 
     addDisclosureMenuEventListeners: function () {
@@ -221,6 +290,7 @@ export default Base.extend(
       }
 
       if (
+        ev.target.nodeName !== 'INPUT' &&
         ev.key &&
         (ev.key.match(/^[^ ]$/) || (this.searchStr.length && ev.key === ' '))
       ) {
@@ -360,6 +430,10 @@ export default Base.extend(
       if (this.$nextFocusableElement) {
         this.removeListener(this.$nextFocusableElement, 'keydown');
         this.$nextFocusableElement = null;
+      }
+
+      if (this.$searchInput) {
+        this.$searchInput.val('').trigger('input');
       }
 
       this.trigger('hide');
@@ -524,16 +598,40 @@ export default Base.extend(
         el.classList.add('error');
         el.setAttribute('data-destructive', 'true');
       }
+      if (item.disabled) {
+        el.classList.add('disabled');
+      }
       if (item.action) {
         el.classList.add('formsubmit');
+        $(el).formsubmit();
       }
       if (type === 'link') {
         el.href = Craft.getUrl(item.url);
       }
       if (item.icon) {
-        el.setAttribute('data-icon', item.icon);
-        if (item.iconColor) {
-          el.classList.add(item.iconColor);
+        if (typeof item.icon === 'string') {
+          el.setAttribute('data-icon', item.icon);
+          if (item.iconColor) {
+            el.classList.add(item.iconColor);
+          }
+        } else {
+          (async () => {
+            let icon;
+            if (item.icon instanceof Element) {
+              icon = item.icon;
+            } else if (typeof item.icon === 'function') {
+              icon = await item.icon();
+            } else {
+              throw 'Unsupported icon type';
+            }
+            const span = document.createElement('span');
+            span.className = 'icon';
+            if (item.iconColor) {
+              span.classList.add(item.iconColor);
+            }
+            span.append(icon);
+            el.prepend(span);
+          })();
         }
       }
       if (item.action) {
@@ -605,14 +703,19 @@ export default Base.extend(
       return li;
     },
 
-    addItem: function (item, ul) {
+    addItem: function (item, ul, prepend = false) {
       const li = this.createItem(item);
 
       if (!ul) {
         ul = this.$container.children('ul').last().get(0) || this.addGroup();
       }
 
-      ul.append(li);
+      if (prepend) {
+        ul.prepend(li);
+      } else {
+        ul.append(li);
+      }
+
       const el = li.querySelector('a, button');
 
       // show or hide it (show, in case the UL is already hidden)
@@ -688,6 +791,8 @@ export default Base.extend(
         }
       }
 
+      this.updateHrVisibility();
+
       return ul;
     },
 
@@ -709,16 +814,9 @@ export default Base.extend(
       const ul = li.parentNode;
       if (ul.classList.contains('hidden')) {
         ul.classList.remove('hidden');
-        if (
-          ul.previousElementSibling &&
-          ul.previousElementSibling.nodeName === 'HR'
-        ) {
-          ul.previousElementSibling.classList.remove('hidden');
-        }
-        if (ul.nextElementSibling && ul.nextElementSibling.nodeName === 'HR') {
-          ul.nextElementSibling.classList.remove('hidden');
-        }
       }
+
+      this.updateHrVisibility();
 
       if (this.isExpanded()) {
         this.setContainerPosition();
@@ -731,22 +829,48 @@ export default Base.extend(
       const ul = li.parentNode;
       if (ul.querySelectorAll(':scope > li:not(.hidden)').length === 0) {
         ul.classList.add('hidden');
-        if (
-          ul.previousElementSibling &&
-          ul.previousElementSibling.nodeName === 'HR'
-        ) {
-          ul.previousElementSibling.classList.add('hidden');
-        } else if (
-          ul.nextElementSibling &&
-          ul.nextElementSibling.nodeName === 'HR'
-        ) {
-          ul.nextElementSibling.classList.add('hidden');
-        }
       }
+
+      this.updateHrVisibility();
 
       if (this.isExpanded()) {
         this.setContainerPosition();
       }
+    },
+
+    removeItem(el) {
+      const li = el.parentNode;
+      const ul = li.parentNode;
+      li.remove();
+      if (ul.querySelectorAll(':scope > li').length === 0) {
+        ul.remove();
+      }
+      if (ul.querySelectorAll(':scope > li:not(.hidden)').length === 0) {
+        ul.classList.add('hidden');
+      }
+
+      this.updateHrVisibility();
+
+      if (this.isExpanded()) {
+        this.setContainerPosition();
+      }
+    },
+
+    updateHrVisibility() {
+      const $children = this.$container.children();
+      let foundVisibleGroup = false;
+      $children.each((i, child) => {
+        if (child.nodeName === 'HR') {
+          if (foundVisibleGroup) {
+            child.classList.remove('hidden');
+            foundVisibleGroup = false;
+          } else {
+            child.classList.add('hidden');
+          }
+        } else if (!child.classList.contains('hidden')) {
+          foundVisibleGroup = true;
+        }
+      });
     },
 
     /**
@@ -755,9 +879,8 @@ export default Base.extend(
     destroy: function () {
       this.$trigger.removeData('trigger');
 
-      Garnish.DisclosureMenu.instances = Craft.Preview.instances.filter(
-        (o) => o !== this
-      );
+      Garnish.DisclosureMenu.instances =
+        Garnish.DisclosureMenu.instances.filter((o) => o !== this);
 
       this.base();
     },
@@ -797,6 +920,7 @@ export default Base.extend(
     defaults: {
       position: null,
       windowSpacing: 5,
+      withSearchInput: false,
     },
 
     /**

@@ -9,10 +9,15 @@
 {% set values = values ?? (value ?? false ? [value] : []) -%}
 {% set limit = limit ?? null %}
 {% set showHandles = showHandles ?? false %}
+{% set showIndicators = showIndicators ?? false %}
 {% set sortable = (not limit or limit > 1) and (sortable ?? true) %}
+{% set showActionMenus = showActionMenus ?? true %}
+{% set hyperlinks = hyperlinks ?? true %}
+{% set withSearchInput = withSearchInput ?? true %}
 {% set createAction = createAction ?? null %}
 {% set disabled = (disabled ?? false) ? true : false %}
 {% set registerJs = registerJs ?? true %}
+{% set jsClass = jsClass ?? 'Craft.ComponentSelectInput' %}
 
 {# sort the options by handle, then label #}
 {% if showHandles %}
@@ -24,10 +29,6 @@
   id: id,
   class: ['componentselect']|merge((class ?? [])|explodeClass),
 }|merge(containerAttributes ?? [], recursive=true) %}
-
-{% set modalSettings = {
-  modalTitle: selectionLabel ?? 'Choose'|t('app'),
-}|merge(modalSettings ?? [], recursive=true) %}
 
 {%- if block('attr') is defined %}
   {%- set containerAttributes = containerAttributes|merge(('<div ' ~ block('attr') ~ '>')|parseAttr, recursive=true) %}
@@ -42,20 +43,24 @@
     ]|filter,
   } %}
     {%- apply spaceless %}
-      {% for component in values %}
-        <li>
-          {% set chip = chip(component, {
-            inputName: inputName ?? name ?? null,
-            checkbox: selectable ?? false,
-            showActionMenu: true,
-            showHandle: showHandles,
-          }) %}
-          {% if disabled %}
-            {% set chip = chip|removeClass('removable') %}
-          {% endif %}
-          {{ chip|raw }}
-        </li>
-      {% endfor %}
+      {% block chips %}
+        {% for component in values %}
+          <li>
+            {% set chip = chip(component, {
+              inputName: inputName ?? name ?? null,
+              checkbox: selectable ?? false,
+              showActionMenu: showActionMenus,
+              showHandle: showHandles,
+              showIndicators: showIndicators,
+              hyperlink: hyperlinks,
+            }) %}
+            {% if disabled %}
+              {% set chip = chip|removeClass('removable') %}
+            {% endif %}
+            {{ chip|raw }}
+          </li>
+        {% endfor %}
+      {% endblock %}
     {% endapply -%}
   {% endtag %}
 
@@ -86,11 +91,13 @@
         class: ['dashed', 'add-btn'],
       },
       omitIfEmpty: false,
+      withSearchInput,
+      disabled,
     }) }}
 
-    {% if createAction %}
+    {% if createAction and not disabled %}
       {{ forms.button({
-        class: ['add', 'icon', 'dashed', 'create-btn'],
+        class: ['dashed', 'create-btn'],
         label: 'Create'|t('app'),
         icon: 'plus',
       }) }}
@@ -102,13 +109,17 @@
   {% set jsSettings = {
     id: id|namespaceInputId,
     name: name|namespaceInputName,
-    limit: limit,
-    showHandles: showHandles,
-    sortable: sortable,
-    createAction: createAction,
-  } %}
+    limit,
+    showHandles,
+    sortable,
+    showActionMenus,
+    hyperlinks,
+    createAction,
+  }|merge(jsSettings ?? {}) %}
 
   {% js %}
-    new Craft.ComponentSelectInput({{ jsSettings|json_encode|raw }});
+    (() => {
+      new {{ jsClass }}({{ jsSettings|json_encode|raw }});
+    })();
   {% endjs %}
 {% endif %}

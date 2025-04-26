@@ -413,6 +413,19 @@ $.extend(Craft, {
   },
 
   /**
+   * Sleeps for the given duration in milliseconds.
+   *
+   * @param {number} delay
+   * @return {Promise}
+   * @since 5.6.0
+   */
+  sleep: function (delay) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, delay);
+    });
+  },
+
+  /**
    * @param {string} [path]
    * @param {(Object|string)} [params]
    * @param {string} [baseUrl]
@@ -499,14 +512,13 @@ $.extend(Craft, {
 
     // Does the base URL already have a query string?
     qsPos = url.indexOf('?');
+    let baseParams;
     if (qsPos !== -1) {
-      params = $.extend(
-        Object.fromEntries(
-          new URLSearchParams(url.substring(qsPos + 1)).entries()
-        ),
-        params
+      baseParams = Object.fromEntries(
+        new URLSearchParams(url.substring(qsPos + 1)).entries()
       );
       url = url.substring(0, qsPos);
+      params = Object.assign({}, baseParams, params);
     }
 
     if (!Craft.omitScriptNameInUrls && path) {
@@ -517,13 +529,10 @@ $.extend(Craft, {
         }
       } else {
         // Move the path into the query string params
-
-        // Is the path param already set?
-        if (typeof params[Craft.pathParam] !== 'undefined') {
-          let basePath = params[Craft.pathParam].trimEnd();
-          path = basePath + (path ? '/' + path : '');
+        if (baseParams && baseParams[Craft.pathParam] !== undefined) {
+          path =
+            baseParams[Craft.pathParam].trimEnd() + (path ? '/' + path : '');
         }
-
         params[Craft.pathParam] = path;
         path = null;
       }
@@ -1144,15 +1153,13 @@ $.extend(Craft, {
     // Make sure oldData and newData are always strings. This is important because further below String.split is called.
     oldData = typeof oldData === 'string' ? oldData : '';
     newData = typeof newData === 'string' ? newData : '';
-    if (!Array.isArray(deltaNames)) {
-      deltaNames = [];
-    }
-    if (!$.isPlainObject(initialDeltaValues)) {
-      initialDeltaValues = {};
-    }
-    if (!Array.isArray(modifiedDeltaNames)) {
-      modifiedDeltaNames = [];
-    }
+    deltaNames = Array.isArray(deltaNames) ? [...deltaNames] : [];
+    initialDeltaValues = $.isPlainObject(initialDeltaValues)
+      ? initialDeltaValues
+      : {};
+    modifiedDeltaNames = Array.isArray(modifiedDeltaNames)
+      ? [...modifiedDeltaNames]
+      : [];
 
     // Sort the delta namespaces from least -> most specific
     deltaNames.sort((a, b) => {
@@ -2073,7 +2080,6 @@ $.extend(Craft, {
    */
   initUiElements: function ($container) {
     $('.grid', $container).grid();
-    $('.info', $container).infoicon();
     $('.checkbox-select', $container).checkboxselect();
     $('.fieldtoggle', $container).fieldtoggle();
     $('.lightswitch', $container).lightswitch();
@@ -2087,6 +2093,26 @@ $.extend(Craft, {
     // menus last, since they can mess with the DOM
     $('.menubtn:not([data-disclosure-trigger])', $container).menubtn();
     $('[data-disclosure-trigger]', $container).disclosureMenu();
+
+    /**
+     * Swap any instruction text with info icons
+     * This needs to happen before the `infoicon` method
+     */
+    $(
+      '.field.info-icon-instructions > .instructions, #details .meta > .field > .instructions',
+      $container
+    ).each(function () {
+      const $instructions = $(this);
+      const $label = $instructions.siblings('.heading').find('label');
+      $('<div/>', {
+        class: 'info',
+        html: $instructions.children().html(),
+      }).appendTo($label);
+      // Keep the original element around in case an aria-describedby attribute is referencing it
+      $instructions.addClass('visually-hidden');
+    });
+
+    $('.info', $container).infoicon();
 
     // Open outbound links in new windows
     // hat tip: https://stackoverflow.com/a/2911045/1688568
@@ -2453,6 +2479,7 @@ $.extend(Craft, {
           key: i,
           type: $element.data('type'),
           id: elementId,
+          fieldId: $element.data('field-id'),
           ownerId: $element.data('owner-id'),
           siteId,
           instances: [],
@@ -2469,16 +2496,22 @@ $.extend(Craft, {
         for (let key of Object.keys(instances)) {
           const $element = $elements.eq(key);
           const $replacement = $(instances[key]);
-          for (let attribute of $replacement[0].attributes) {
+          const replacementAttributes = $replacement[0].attributes;
+          for (let attribute of replacementAttributes) {
             if (attribute.name === 'class') {
               $element.addClass(attribute.value);
             } else {
               $element.attr(attribute.name, attribute.value);
             }
           }
+          for (let attribute of $element[0].attributes) {
+            if (replacementAttributes[attribute.name] === undefined) {
+              $element.removeAttr(attribute.name);
+            }
+          }
           const $actions = $element
             .find(
-              '> .chip-content .chip-actions,> .card-actions-container .card-actions'
+              '> .chip-content .chip-actions, > .card-titlebar > .card-actions-container .card-actions'
             )
             .detach();
           const $inputs = $element.find('input,button').detach();
@@ -2487,7 +2520,7 @@ $.extend(Craft, {
           if ($actions.length) {
             const $oldStatus = $actions.find('span.status');
             const $newStatus = $replacement.find(
-              '> .chip-content .chip-actions span.status,> .card-actions-container .card-actions span.status'
+              '> .chip-content .chip-actions span.status, > .card-titlebar > .card-actions-container .card-actions span.status'
             );
 
             if (
@@ -2500,7 +2533,7 @@ $.extend(Craft, {
 
             $element
               .find(
-                '> .chip-content .chip-actions,> .card-actions-container .card-actions'
+                '> .chip-content .chip-actions, > .card-titlebar > .card-actions-container .card-actions'
               )
               .replaceWith($actions);
           }
@@ -2560,14 +2593,15 @@ $.extend(Craft, {
    *
    * @param {jQuery|HTMLElement} chip
    * @param {Array} actions
+   * @param {boolean} [prepend]
    */
-  addActionsToChip(chip, actions) {
+  addActionsToChip(chip, actions, prepend = false) {
     if (!actions?.length) {
       return;
     }
 
     const $actions = $(chip).find(
-      '> .chip-content > .chip-actions, > .card-actions-container > .card-actions'
+      '> .chip-content > .chip-actions, > .card-titlebar > .card-actions-container > .card-actions'
     );
     let $actionMenuBtn = $actions.find('.action-btn');
 
@@ -2601,12 +2635,22 @@ $.extend(Craft, {
     const safeActions = actions.filter((a) => !a.destructive);
     const destructiveActions = actions.filter((a) => a.destructive);
 
+    let before = prepend
+      ? disclosureMenu.$container.children().first().get(0)
+      : null;
+
     if (safeActions.length) {
-      disclosureMenu.addItems(safeActions, disclosureMenu.addGroup());
+      disclosureMenu.addItems(
+        safeActions,
+        disclosureMenu.addGroup(null, true, before)
+      );
     }
 
     if (destructiveActions.length) {
-      disclosureMenu.addItems(destructiveActions, disclosureMenu.addGroup());
+      disclosureMenu.addItems(
+        destructiveActions,
+        disclosureMenu.addGroup(null, true, before)
+      );
     }
 
     Craft.initUiElements(disclosureMenu.$container);
@@ -2807,6 +2851,53 @@ $.extend(Craft, {
   useMobileStyles: function () {
     return Garnish.isMobileBrowser() || document.body.clientWidth < 600;
   },
+
+  animate: async function (element, css) {
+    await this.animateAll([[element, css]]);
+  },
+
+  animateAll: function (animations) {
+    return new Promise((resolve, reject) => {
+      for (let i = 0; i < animations.length; i++) {
+        if ((!animations[i][0]) instanceof jQuery) {
+          animations[i][0] = $(animations[i][0]);
+        }
+      }
+
+      if (!document.startViewTransition) {
+        // fallback to Velocity
+        for (let i = 0; i < animations.length; i++) {
+          const [$element, css] = animations[i];
+          $element.velocity(
+            css,
+            Craft.BaseElementSelectInput.REMOVE_FX_DURATION,
+            i === animations.length - 1 ? resolve : null
+          );
+        }
+        return;
+      }
+
+      for (const [$element] of animations) {
+        if ($element.css('view-transition-name') === 'none') {
+          $element.css(
+            'view-transition-name',
+            `vt-${Math.floor(Math.random() * 100000)}`
+          );
+        }
+      }
+
+      const transition = document.startViewTransition(() => {
+        for (const [$element, css] of animations) {
+          $element.css(css);
+        }
+      });
+
+      transition.finished.then(resolve).catch((e) => {
+        console.warn(e);
+        resolve();
+      });
+    });
+  },
 });
 
 // -------------------------------------------
@@ -2828,14 +2919,17 @@ if (typeof BroadcastChannel !== 'undefined') {
 
       case 'trackJobProgress':
         Craft.cp.setJobData(ev.data.jobData);
-
         if (Craft.cp.jobInfo.length) {
           // Check again after a longer delay than usual,
           // as it looks like another browser tab is driving for now
           const delay = Craft.cp.getNextJobDelay() + 1000;
           Craft.cp.trackJobProgress(delay);
         }
+        break;
 
+      case 'copyElements':
+        const elementInfo = Craft.getLocalStorage('copiedElements');
+        Craft.cp.showElementCopyNotification(elementInfo || []);
         break;
     }
   });
@@ -3102,11 +3196,15 @@ $.extend($.fn, {
   datetime: function () {
     return this.each(function () {
       let $wrapper = $(this);
-      let $inputs = $wrapper.find('input:not([name$="[timezone]"])');
+      let $inputs = $wrapper.find('input.text');
       let checkValue = () => {
         let hasValue = false;
         for (let i = 0; i < $inputs.length; i++) {
-          if ($inputs.eq(i).val() && !$inputs.eq(i).is(':disabled')) {
+          if ($inputs.eq(i).is(':disabled')) {
+            hasValue = false;
+            break;
+          }
+          if ($inputs.eq(i).val()) {
             hasValue = true;
             break;
           }

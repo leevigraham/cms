@@ -12,6 +12,7 @@ import $ from 'jquery';
       $container: null,
       $shade: null,
       $liveRegion: $('<span class="visually-hidden" role="status"></span>'),
+      $triggerElement: null,
       isOpen: false,
       useMobileStyles: null,
 
@@ -51,8 +52,9 @@ import $ from 'jquery';
           return;
         }
 
-        this.setTriggerElement(document.activeElement);
-
+        this.setTriggerElement(
+          this.settings.triggerElement || document.activeElement
+        );
         this._cancelTransitionListeners();
 
         const activePreview =
@@ -117,7 +119,7 @@ import $ from 'jquery';
             .css(Garnish.ltr ? 'left' : 'right', '100vw');
         }
 
-        this.$container.one('transitionend.slideout', () => {
+        this._afterTransition(this.$container, () => {
           Craft.setFocusWithin(this.$container);
         });
 
@@ -152,7 +154,7 @@ import $ from 'jquery';
       },
 
       setTriggerElement: function (trigger) {
-        this.settings.triggerElement = trigger;
+        this.$triggerElement = $(trigger);
       },
 
       close: function () {
@@ -167,23 +169,55 @@ import $ from 'jquery';
         this._cancelTransitionListeners();
 
         if (this.$shade) {
-          this.$shade
-            .removeClass('so-visible')
-            .one('transitionend.slideout', () => {
-              this.$shade.hide();
-            });
+          this.$shade.removeClass('so-visible');
+          this._afterTransition(this.$shade, () => {
+            this.$shade.hide();
+          });
         }
 
         Craft.Slideout.removePanel(this);
         Garnish.uiLayerManager.removeLayer();
         Garnish.resetModalBackgroundLayerVisibility();
-        this.$container.one('transitionend.slideout', () => {
+        this._afterTransition(this.$container, () => {
           this.$outerContainer.addClass('hidden');
           this.trigger('close');
         });
 
-        if (this.settings.triggerElement) {
-          this.settings.triggerElement.focus();
+        if (this.$triggerElement?.length) {
+          let focusTarget = $(this.$triggerElement)[0]; // Ensure we convert from jQuery to DOM element
+
+          // Check if target is still visible
+          if (!focusTarget.checkVisibility()) {
+            // If it's a disclosure, get the disclosure trigger instead
+            const disclosure = focusTarget.closest('.menu--disclosure');
+            if (disclosure) {
+              const disclosureId = disclosure.getAttribute('id');
+              focusTarget = document.querySelector(
+                `[aria-controls="${disclosureId}"]`
+              );
+            } else {
+              focusTarget = null;
+            }
+          }
+
+          if (focusTarget) {
+            focusTarget.focus();
+          }
+        }
+      },
+
+      /**
+       * Performs the callback after the CSS transition has ended, or immediately if user prefers reduced motion
+       * @param $target
+       * @param callback
+       * @private
+       */
+      _afterTransition: function ($target, callback) {
+        // If a user prefers reduced motion, perform the callback immediately
+        if (Garnish.prefersReducedMotion()) {
+          callback();
+        } else {
+          $target.one('transitionend.slideout', callback);
         }
       },
 
@@ -227,6 +261,9 @@ import $ from 'jquery';
       },
       instances: {},
       openPanels: [],
+      totalPanels: function () {
+        return Craft.Slideout.openPanels.length;
+      },
       addPanel: function (panel) {
         Craft.Slideout.openPanels.unshift(panel);
         if (panel.useMobileStyles) {
@@ -247,7 +284,7 @@ import $ from 'jquery';
         }
       },
       updateStyles: function () {
-        const totalPanels = Craft.Slideout.openPanels.length;
+        const totalPanels = Craft.Slideout.totalPanels();
         Craft.Slideout.openPanels.forEach((panel, i) => {
           panel.$container.css(
             Garnish.ltr ? 'left' : 'right',
@@ -263,4 +300,13 @@ import $ from 'jquery';
       },
     }
   );
+
+  Garnish.on(Craft.Slideout, ['open', 'close'], () => {
+    for (const hud of Garnish.HUD.instances) {
+      if (hud.showing) {
+        console.log('update');
+        hud.updateSizeAndPosition(true);
+      }
+    }
+  });
 })(jQuery);

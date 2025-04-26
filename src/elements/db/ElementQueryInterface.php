@@ -10,6 +10,7 @@ namespace craft\elements\db;
 use craft\base\ElementInterface;
 use craft\db\Query;
 use craft\elements\ElementCollection;
+use craft\models\FieldLayout;
 use yii\base\Arrayable;
 use yii\db\Connection;
 use yii\db\QueryInterface;
@@ -73,6 +74,16 @@ interface ElementQueryInterface extends QueryInterface, Arrayable
      * @return static self reference
      */
     public function asArray(bool $value = true): static;
+
+    /**
+     * Causes the query to return provisional drafts for the matching elements,
+     * when they exist for the current user.
+     *
+     * @param bool $value The property value (defaults to true)
+     * @return static self reference
+     * @since 5.6.0
+     */
+    public function withProvisionalDrafts(bool $value = true): static;
 
     /**
      * Causes the query to return matching {elements} as they are stored in the database, ignoring matching placeholder
@@ -236,6 +247,20 @@ interface ElementQueryInterface extends QueryInterface, Arrayable
      * @since 3.7.0
      */
     public function provisionalDrafts(?bool $value = true): static;
+
+    /**
+     * Narrows the query results to only canonical elements, including elements
+     * that reference another canonical element via `canonicalId` so long as they
+     * aren’t a draft.
+     *
+     * Unpublished drafts can be included as well if `drafts(null)` and
+     * `draftOf(false)` are also passed.
+     *
+     * @param bool $value The property value
+     * @return static self reference
+     * @since 5.7.0
+     */
+    public function canonicalsOnly(bool $value = true): static;
 
     /**
      * Narrows the query results to only unpublished drafts which have been saved after initial creation.
@@ -1648,4 +1673,12 @@ interface ElementQueryInterface extends QueryInterface, Arrayable
      * @since 3.6.0
      */
     public function afterPopulate(array $elements): array;
+
+    /**
+     * Returns the field layouts that could be associated with the resulting elements.
+     *
+     * @return FieldLayout[]
+     * @since 5.6.0
+     */
+    public function getFieldLayouts(): array;
 }

@@ -8,8 +8,6 @@
 namespace craft\elements\db;
 
 use Craft;
-use craft\base\ElementContainerFieldInterface;
-use craft\base\ElementInterface;
 use craft\db\Query;
 use craft\db\QueryAbortedException;
 use craft\db\Table;
@@ -23,7 +21,6 @@ use craft\models\Section;
 use craft\models\UserGroup;
 use DateTime;
 use Illuminate\Support\Collection;
-use yii\base\InvalidArgumentException;
 use yii\base\InvalidConfigException;
 
 /**
@@ -55,6 +52,12 @@ use yii\base\InvalidConfigException;
  */
 class EntryQuery extends ElementQuery implements NestedElementQueryInterface
 {
+    use NestedElementQueryTrait {
+        __set as nestedTraitSet;
+        cacheTags as nestedTraitCacheTags;
+        fieldLayouts as nestedTraitFieldLayouts;
+    }
+
     // General parameters
     // -------------------------------------------------------------------------
 
@@ -90,43 +93,6 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
      * @used-by sectionId()
      */
     public mixed $sectionId = null;
-
-    /**
-     * @var mixed The field ID(s) that the resulting entries must belong to.
-     * @used-by fieldId()
-     * @since 5.0.0
-     */
-    public mixed $fieldId = null;
-
-    /**
-     * @var mixed The primary owner element ID(s) that the resulting entries must belong to.
-     * @used-by primaryOwner()
-     * @used-by primaryOwnerId()
-     * @since 5.0.0
-     */
-    public mixed $primaryOwnerId = null;
-
-    /**
-     * @var mixed The owner element ID(s) that the resulting entries must belong to.
-     * @used-by owner()
-     * @used-by ownerId()
-     * @since 5.0.0
-     */
-    public mixed $ownerId = null;
-
-    /**
-     * @var bool|null Whether the owner elements can be drafts.
-     * @used-by allowOwnerDrafts()
-     * @since 5.0.0
-     */
-    public ?bool $allowOwnerDrafts = null;
-
-    /**
-     * @var bool|null Whether the owner elements can be revisions.
-     * @used-by allowOwnerRevisions()
-     * @since 5.0.0
-     */
-    public ?bool $allowOwnerRevisions = null;
 
     /**
      * @var mixed The entry type ID(s) that the resulting entries must have.
@@ -271,15 +237,6 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
             case 'section':
                 $this->section($value);
                 break;
-            case 'field':
-                $this->field($value);
-                break;
-            case 'owner':
-                $this->owner($value);
-                break;
-            case 'primaryOwner':
-                $this->primaryOwner($value);
-                break;
             case 'type':
                 $this->type($value);
                 break;
@@ -287,7 +244,7 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
                 $this->authorGroup($value);
                 break;
             default:
-                parent::__set($name, $value);
+                $this->nestedTraitSet($name, $value);
         }
     }
 
@@ -434,106 +391,6 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
     public function sectionId(mixed $value): static
     {
         $this->sectionId = $value;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $fieldId
-     * @since 5.0.0
-     */
-    public function field(mixed $value): static
-    {
-        if (Db::normalizeParam($value, function($item) {
-            if (is_string($item)) {
-                $item = Craft::$app->getFields()->getFieldByHandle($item);
-            }
-            return $item instanceof ElementContainerFieldInterface ? $item->id : null;
-        })) {
-            $this->fieldId = $value;
-        } else {
-            $this->fieldId = false;
-        }
-
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $fieldId
-     * @since 5.0.0
-     */
-    public function fieldId(mixed $value): static
-    {
-        $this->fieldId = $value;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $primaryOwnerId
-     * @since 5.0.0
-     */
-    public function primaryOwnerId(mixed $value): static
-    {
-        $this->primaryOwnerId = $value;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $primaryOwnerId
-     * @since 5.0.0
-     */
-    public function primaryOwner(ElementInterface $primaryOwner): static
-    {
-        $this->primaryOwnerId = [$primaryOwner->id];
-        $this->siteId = $primaryOwner->siteId;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $ownerId
-     * @since 5.0.0
-     */
-    public function ownerId(mixed $value): static
-    {
-        $this->ownerId = $value;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $ownerId
-     * @since 5.0.0
-     */
-    public function owner(ElementInterface $owner): static
-    {
-        $this->ownerId = [$owner->id];
-        $this->siteId = $owner->siteId;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $allowOwnerDrafts
-     * @since 5.0.0
-     */
-    public function allowOwnerDrafts(?bool $value = true): static
-    {
-        $this->allowOwnerDrafts = $value;
-        return $this;
-    }
-
-    /**
-     * @inheritdoc
-     * @uses $allowOwnerRevisions
-     * @since 5.0.0
-     */
-    public function allowOwnerRevisions(?bool $value = true): static
-    {
-        $this->allowOwnerRevisions = $value;
         return $this;
     }
 
@@ -984,29 +841,12 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
             return false;
         }
 
-        if ($this->fieldId === false) {
-            throw new QueryAbortedException();
-        }
-
         $this->_normalizeSectionId();
-        $this->_normalizeFieldId();
         $this->_normalizeTypeId();
 
         // See if 'section', 'type', or 'authorGroup' were set to invalid handles
         if ($this->sectionId === [] || $this->typeId === [] || $this->authorGroupId === []) {
             return false;
-        }
-
-        try {
-            $this->primaryOwnerId = $this->_normalizeOwnerId($this->primaryOwnerId);
-        } catch (InvalidArgumentException) {
-            throw new InvalidConfigException('Invalid primaryOwnerId param value');
-        }
-
-        try {
-            $this->ownerId = $this->_normalizeOwnerId($this->ownerId);
-        } catch (InvalidArgumentException) {
-            throw new InvalidConfigException('Invalid ownerId param value');
         }
 
         $this->joinElementTable(Table::ENTRIES);
@@ -1020,53 +860,16 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
             'entries.expiryDate',
         ]);
 
-        if (!empty($this->fieldId) || !empty($this->ownerId) || !empty($this->primaryOwnerId)) {
-            // Join in the elements_owners table
-            $ownersCondition = [
-                'and',
-                '[[elements_owners.elementId]] = [[elements.id]]',
-                $this->ownerId ? ['elements_owners.ownerId' => $this->ownerId] : '[[elements_owners.ownerId]] = [[entries.primaryOwnerId]]',
-            ];
-
-            $this->query
-                ->addSelect([
-                    'elements_owners.ownerId',
-                    'elements_owners.sortOrder',
-                ])
-                ->innerJoin(['elements_owners' => Table::ELEMENTS_OWNERS], $ownersCondition);
-            $this->subQuery->innerJoin(['elements_owners' => Table::ELEMENTS_OWNERS], $ownersCondition);
-
-            if ($this->fieldId) {
-                $this->subQuery->andWhere(['entries.fieldId' => $this->fieldId]);
-            }
-
-            if ($this->primaryOwnerId) {
-                $this->subQuery->andWhere(['entries.primaryOwnerId' => $this->primaryOwnerId]);
-            }
-
-            // Ignore revision/draft blocks by default
-            $allowOwnerDrafts = $this->allowOwnerDrafts ?? ($this->id || $this->primaryOwnerId || $this->ownerId);
-            $allowOwnerRevisions = $this->allowOwnerRevisions ?? ($this->id || $this->primaryOwnerId || $this->ownerId);
-
-            if (!$allowOwnerDrafts || !$allowOwnerRevisions) {
-                $this->subQuery->innerJoin(
-                    ['owners' => Table::ELEMENTS],
-                    $this->ownerId ? '[[owners.id]] = [[elements_owners.ownerId]]' : '[[owners.id]] = [[entries.primaryOwnerId]]'
-                );
-
-                if (!$allowOwnerDrafts) {
-                    $this->subQuery->andWhere(['owners.draftId' => null]);
-                }
-
-                if (!$allowOwnerRevisions) {
-                    $this->subQuery->andWhere(['owners.revisionId' => null]);
-                }
-            }
-
-            $this->defaultOrderBy = ['elements_owners.sortOrder' => SORT_ASC];
-        } else {
-            $this->_applySectionIdParam();
+        // todo: update after the next breakpoint
+        if (
+            Craft::$app->getConfig()->getGeneral()->staticStatuses &&
+            Craft::$app->getDb()->columnExists(Table::ENTRIES, 'status')
+        ) {
+            $this->query->addSelect(['entries.status']);
         }
+
+        $this->_applySectionIdParam();
+        $this->applyNestedElementParams('entries.fieldId', 'entries.primaryOwnerId');
 
         if ($this->postDate) {
             $this->subQuery->andWhere(Db::parseDateParam('entries.postDate', $this->postDate));
@@ -1155,6 +958,11 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
 
     private function loadAuthorIds(array $entries): void
     {
+        $entries = array_filter($entries, fn(Entry $entry) => isset($entry->sectionId));
+        if (empty($entries)) {
+            return;
+        }
+
         /** @var Entry[][] $indexedEntries */
         $indexedEntries = ArrayHelper::index($entries, null, [
             fn(Entry $entry) => $entry->id,
@@ -1184,6 +992,17 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
      */
     protected function statusCondition(string $status): mixed
     {
+        if (
+            in_array($status, [Entry::STATUS_LIVE, Entry::STATUS_PENDING, Entry::STATUS_EXPIRED]) &&
+            Craft::$app->getConfig()->getGeneral()->staticStatuses
+        ) {
+            return [
+                'elements.enabled' => true,
+                'elements_sites.enabled' => true,
+                'entries.status' => $status,
+            ];
+        }
+
         // Always consider “now” to be the current time @ 59 seconds into the minute.
         // This makes entry queries more cacheable, since they only change once every minute (https://github.com/craftcms/cms/issues/5389),
         // while not excluding any entries that may have just been published in the past minute (https://github.com/craftcms/cms/issues/7853).
@@ -1382,45 +1201,6 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
     }
 
     /**
-     * Normalizes the fieldId param to an array of IDs or null
-     */
-    private function _normalizeFieldId(): void
-    {
-        if (empty($this->fieldId)) {
-            $this->fieldId = is_array($this->fieldId) ? [] : null;
-        } elseif (is_numeric($this->fieldId)) {
-            $this->fieldId = [$this->fieldId];
-        } elseif (!is_array($this->fieldId) || !ArrayHelper::isNumeric($this->fieldId)) {
-            $this->fieldId = (new Query())
-                ->select(['id'])
-                ->from([Table::FIELDS])
-                ->where(Db::parseNumericParam('id', $this->fieldId))
-                ->column();
-        }
-    }
-
-    /**
-     * Normalizes the primaryOwnerId param to an array of IDs or null
-     *
-     * @param mixed $value
-     * @return int[]|null
-     * @throws InvalidArgumentException
-     */
-    private function _normalizeOwnerId(mixed $value): ?array
-    {
-        if (empty($value)) {
-            return null;
-        }
-        if (is_numeric($value)) {
-            return [$value];
-        }
-        if (!is_array($value) || !ArrayHelper::isNumeric($value)) {
-            throw new InvalidArgumentException();
-        }
-        return $value;
-    }
-
-    /**
      * Applies the 'ref' param to the query being prepared.
      */
     private function _applyRefParam(): void
@@ -1468,6 +1248,7 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
     protected function cacheTags(): array
     {
         $tags = [];
+
         // If the type is set, go with that instead of the section
         if ($this->typeId) {
             foreach ($this->typeId as $typeId) {
@@ -1477,23 +1258,10 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
             foreach ($this->sectionId as $sectionId) {
                 $tags[] = "section:$sectionId";
             }
-        } elseif ($this->fieldId) {
-            foreach ($this->fieldId as $fieldId) {
-                $tags[] = "field:$fieldId";
-            }
         }
 
-        if ($this->primaryOwnerId) {
-            foreach ($this->primaryOwnerId as $ownerId) {
-                $tags[] = "element::$ownerId";
-            }
-        }
+        array_push($tags, ...$this->nestedTraitCacheTags());
 
-        if ($this->ownerId) {
-            foreach ($this->ownerId as $ownerId) {
-                $tags[] = "element::$ownerId";
-            }
-        }
         return $tags;
     }
 
@@ -1502,6 +1270,9 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
      */
     protected function fieldLayouts(): array
     {
+        $this->_normalizeTypeId();
+        $this->_normalizeSectionId();
+
         if ($this->typeId || $this->sectionId) {
             $fieldLayouts = [];
             $sectionsService = Craft::$app->getEntries();
@@ -1525,6 +1296,6 @@ class EntryQuery extends ElementQuery implements NestedElementQueryInterface
             return $fieldLayouts;
         }
 
-        return parent::fieldLayouts();
+        return $this->nestedTraitFieldLayouts();
     }
 }

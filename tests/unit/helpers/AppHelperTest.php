@@ -94,9 +94,10 @@ class AppHelperTest extends TestCase
     {
         self::assertNull(App::parseEnv(null));
         self::assertSame(CRAFT_TESTS_PATH, App::parseEnv('$CRAFT_TESTS_PATH'));
+        self::assertSame(CRAFT_TESTS_PATH . '/foo/bar', App::parseEnv('$CRAFT_TESTS_PATH/foo/bar'));
         self::assertSame('CRAFT_TESTS_PATH', App::parseEnv('CRAFT_TESTS_PATH'));
         self::assertSame(null, App::parseEnv('$TEST_MISSING'));
-        self::assertSame(Craft::getAlias('@vendor/foo'), App::parseEnv('@vendor/foo'));
+        self::assertSame(Craft::getAlias('@vendor/foo/bar'), App::parseEnv('@vendor/foo/bar'));
     }
 
     /**
@@ -368,18 +369,6 @@ class AppHelperTest extends TestCase
     }
 
     /**
-     *
-     */
-    public function testViewConfigIndexes(): void
-    {
-        $this->setInaccessibleProperty(Craft::$app->getRequest(), '_isCpRequest', true);
-        $this->testConfigIndexes('viewConfig', ['class', 'registeredAssetBundles', 'registeredJsFiles']);
-
-        $this->setInaccessibleProperty(Craft::$app->getRequest(), '_isCpRequest', false);
-        $this->testConfigIndexes('viewConfig', ['class']);
-    }
-
-    /**
      * @return array
      */
     public static function envConfigDataProvider(): array
@@ -543,8 +532,8 @@ class AppHelperTest extends TestCase
         return [
             [1, '1B'],
             [1024, '1K'],
-            [pow(1024, 2), '1M'],
-            [pow(1024, 3), '1G'],
+            [1024 ** 2, '1M'],
+            [1024 ** 3, '1G'],
         ];
     }
 

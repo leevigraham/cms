@@ -1,12 +1,19 @@
 /** global: Craft */
 /** global: Garnish */
+const punycode = require('punycode/');
+
 /**
- * Handle Generator
+ * Link Input
  */
 Craft.LinkInput = Garnish.Base.extend(
   {
+    /** @type Craft.LinkField */
+    field: null,
+
     /** @type {jQuery} */
     $container: null,
+    /** @type {jQuery} */
+    $field: null,
     /** @type {jQuery|null} */
     $chip: null,
     /** @type {jQuery|null} */
@@ -21,6 +28,10 @@ Craft.LinkInput = Garnish.Base.extend(
       this.setSettings(settings, Craft.LinkInput.defaults);
 
       this.$container.data('linkInput', this);
+      this.field = this.$container
+        .closest('[data-link-field]')
+        .parent()
+        .data('linkField');
       this.$chip = this.$container.children('.chip');
       this.$textInput = this.$container.children('.text');
       this.$hiddenInput = this.$container.children('input[type=hidden]');
@@ -83,7 +94,7 @@ Craft.LinkInput = Garnish.Base.extend(
 
       this.reset();
       this.$chip = $(`
-<div class="chip small">
+<div class="chip chromeless">
   <div class="chip-content">
     <a href="${Craft.escapeHtml(value)}" rel="noopener" target="_blank">
       ${Craft.escapeHtml(label)}
@@ -124,7 +135,9 @@ Craft.LinkInput = Garnish.Base.extend(
 
     initTextInput: function () {
       this.addListener(this.$textInput, 'input', () => {
-        this.$hiddenInput.val(this.normalize(this.$textInput.val()));
+        const value = this.normalize(this.$textInput.val());
+        this.$hiddenInput.val(value);
+        this.field.updateLabel(this.removePrefix(value));
       });
 
       this.addListener(this.$textInput, 'blur', () => {
@@ -148,6 +161,7 @@ Craft.LinkInput = Garnish.Base.extend(
     },
 
     validate: function (value) {
+      value = punycode.toASCII(value);
       return !!value.match(new RegExp(this.settings.pattern, 'i'));
     },
 
@@ -168,17 +182,17 @@ Craft.LinkInput = Garnish.Base.extend(
     initChip: function () {
       const viewAction = this.menu.addItem({
         label: Craft.t('app', 'View in a new tab'),
-        icon: 'share',
+        icon: async () => await Craft.ui.icon('share'),
       });
       const editAction = this.menu.addItem({
         label: Craft.t('app', 'Edit'),
-        icon: 'pencil',
+        icon: async () => await Craft.ui.icon('pencil'),
       });
       this.menu.addHr();
       this.menu.addGroup();
       const removeAction = this.menu.addItem({
         label: 'Remove',
-        icon: 'xmark',
+        icon: async () => await Craft.ui.icon('xmark'),
         destructive: true,
       });
 

@@ -10,6 +10,7 @@ namespace craft\controllers;
 use Craft;
 use craft\elements\Asset;
 use craft\errors\AssetException;
+use craft\filters\UtilityAccess;
 use craft\helpers\Json;
 use craft\i18n\Locale;
 use craft\models\AssetIndexingSession;
@@ -18,7 +19,6 @@ use craft\utilities\AssetIndexes;
 use craft\web\Controller;
 use Throwable;
 use yii\web\BadRequestHttpException;
-use yii\web\ForbiddenHttpException;
 use yii\web\Response;
 
 /** @noinspection ClassOverridesFieldOfSuperClassInspection */
@@ -35,15 +35,23 @@ class AssetIndexesController extends Controller
     /**
      * @inheritdoc
      */
+    public function behaviors(): array
+    {
+        return array_merge(parent::behaviors(), [
+            [
+                'class' => UtilityAccess::class,
+                'utility' => AssetIndexes::class,
+            ],
+        ]);
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function beforeAction($action): bool
     {
         if (!parent::beforeAction($action)) {
             return false;
-        }
-
-        // No permission no bueno
-        if (!Craft::$app->getUtilities()->checkAuthorization(AssetIndexes::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
         }
 
         $this->requireAcceptsJson();
@@ -142,6 +150,14 @@ class AssetIndexesController extends Controller
         // If action is not required, continue with indexing
         if (!$indexingSession->actionRequired) {
             $indexingSession = $assetIndexer->processIndexSession($indexingSession);
+
+            if ($indexingSession->forceStop) {
+                $assetIndexer->stopIndexingSession($indexingSession);
+                return $this->asFailure(data: [
+                    'stop' => $sessionId,
+                    'message' => Craft::t('app', 'There was a problem indexing assets.'),
+                ]);
+            }
 
             // If action is now required, we just processed the last entry
             // To save a round-trip, just pull the session review data

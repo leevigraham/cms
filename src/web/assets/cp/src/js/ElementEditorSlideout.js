@@ -55,13 +55,15 @@ Craft.ElementEditorSlideout = Craft.CpScreenSlideout.extend(
         }
 
         this.elementEditor.on('beforeSubmit', () => {
-          Object.keys(this.settings.saveParams).forEach((name) => {
-            $('<input/>', {
-              class: 'hidden',
-              name: this.elementEditor.namespaceInputName(name),
-              value: this.settings.saveParams[name],
-            }).appendTo(this.$container);
-          });
+          if (this.settings.saveParams) {
+            Object.keys(this.settings.saveParams).forEach((name) => {
+              $('<input/>', {
+                class: 'hidden',
+                name: this.elementEditor.namespaceInputName(name),
+                value: this.settings.saveParams[name],
+              }).appendTo(this.$container);
+            });
+          }
           this.showSubmitSpinner();
         });
         this.elementEditor.on('afterSubmit', () => {
@@ -118,6 +120,12 @@ Craft.ElementEditorSlideout = Craft.CpScreenSlideout.extend(
         params.revisionId = this.$element.data('revision-id');
       }
 
+      if (this.settings.fieldId) {
+        params.fieldId = this.settings.fieldId;
+      } else if (this.$element?.data('field-id')) {
+        params.fieldId = this.$element.data('field-id');
+      }
+
       if (this.settings.ownerId) {
         params.ownerId = this.settings.ownerId;
       } else if (this.$element?.data('owner-id')) {
@@ -144,6 +152,11 @@ Craft.ElementEditorSlideout = Craft.CpScreenSlideout.extend(
         await this.elementEditor.saveDraft();
       }
 
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+
+      await this.settings.onBeforeSubmit();
       this.elementEditor.handleSubmit(ev);
     },
 
@@ -187,15 +200,17 @@ Craft.ElementEditorSlideout = Craft.CpScreenSlideout.extend(
       elementId: null,
       draftId: null,
       revisionId: null,
+      fieldId: null,
       ownerId: null,
       elementType: null,
       siteId: null,
       prevalidate: false,
-      saveParams: {},
+      saveParams: null,
       onSaveElement: null,
       validators: [],
       expandData: [],
       isStatic: false,
+      onBeforeSubmit: async () => {},
     },
   }
 );

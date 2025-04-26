@@ -10,7 +10,6 @@ namespace craft\services;
 use Craft;
 use craft\auth\sso\ProviderInterface;
 use craft\base\MemoizableArray;
-use craft\db\Query;
 use craft\db\Table;
 use craft\elements\User;
 use craft\enums\CmsEdition;
@@ -24,7 +23,7 @@ use yii\base\InvalidConfigException;
 /**
  * SSO service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getSites()|`Craft::$app->sites`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getSso()|`Craft::$app->getSso()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @internal
@@ -217,26 +216,18 @@ class Sso extends Component
      */
     public function findUser(ProviderInterface $provider, string $idpIdentifier): ?User
     {
-        $userId = (new Query())
-            ->select([
-                'userId',
-            ])
-            ->from([
-                Table::SSO_IDENTITIES,
-            ])
-            ->where(
+        return User::find()
+            ->innerJoin(
+                ['s_i' => Table::SSO_IDENTITIES],
+                '[[s_i.userId]] = [[users.id]]',
+            )
+            ->andWhere(
                 [
-                    'provider' => $provider->getHandle(),
-                    'identityId' => $idpIdentifier,
+                    's_i.provider' => $provider->getHandle(),
+                    's_i.identityId' => $idpIdentifier,
                 ]
             )
-            ->scalar();
-
-        if (!$userId) {
-            return null;
-        }
-
-        return Craft::$app->getUsers()->getUserById($userId);
+            ->one();
     }
 
     /**

@@ -18,6 +18,7 @@ use craft\enums\LicenseKeyStatus;
 use craft\errors\BusyResourceException;
 use craft\errors\InvalidPluginException;
 use craft\errors\StaleResourceException;
+use craft\filters\UtilityAccess;
 use craft\helpers\Api;
 use craft\helpers\App;
 use craft\helpers\ArrayHelper;
@@ -70,6 +71,21 @@ class AppController extends Controller
     /**
      * @inheritdoc
      */
+    public function behaviors(): array
+    {
+        return array_merge(parent::behaviors(), [
+            [
+                'class' => UtilityAccess::class,
+                'utility' => UpdatesUtility::class,
+                'only' => ['check-for-updates', 'cache-updates'],
+                'when' => fn() => !Craft::$app->getUser()->checkPermission('performUpdates'),
+            ],
+        ]);
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function beforeAction($action): bool
     {
         if ($action->id === 'migrate') {
@@ -116,6 +132,22 @@ class AppController extends Controller
     }
 
     /**
+     * Returns the HTML for a control panel icon.
+     *
+     * @return Response
+     * @since 5.7.0
+     */
+    public function actionIconSvg(): Response
+    {
+        $this->requireCpRequest();
+        $this->requireAcceptsJson();
+
+        return $this->asJson([
+            'iconSvg' => Cp::iconSvg($this->request->getRequiredParam('icon')),
+        ]);
+    }
+
+    /**
      * Returns the latest Craftnet API headers.
      *
      * @return Response
@@ -156,14 +188,6 @@ class AppController extends Controller
     {
         $this->requireAcceptsJson();
 
-        // Require either the 'performUpdates' permission or access to the Updates utility
-        if (
-            !Craft::$app->getUser()->checkPermission('performUpdates') &&
-            !Craft::$app->getUtilities()->checkAuthorization(UpdatesUtility::class)
-        ) {
-            throw new ForbiddenHttpException('User is not permitted to perform this action');
-        }
-
         $updatesService = Craft::$app->getUpdates();
 
         if ($this->request->getParam('onlyIfCached') && !$updatesService->getIsUpdateInfoCached()) {
@@ -187,14 +211,6 @@ class AppController extends Controller
     public function actionCacheUpdates(): Response
     {
         $this->requireAcceptsJson();
-
-        // Require either the 'performUpdates' permission or access to the Updates utility
-        if (
-            !Craft::$app->getUser()->checkPermission('performUpdates') &&
-            !Craft::$app->getUtilities()->checkAuthorization(UpdatesUtility::class)
-        ) {
-            throw new ForbiddenHttpException('User is not permitted to perform this action');
-        }
 
         $updateData = $this->request->getBodyParam('updates');
         $updatesService = Craft::$app->getUpdates();
@@ -269,7 +285,7 @@ class AppController extends Controller
 
         $projectConfigService = Craft::$app->getProjectConfig();
         if ($applyProjectConfigChanges) {
-            $applyProjectConfigChanges = $projectConfigService->areChangesPending();
+            $applyProjectConfigChanges = $projectConfigService->areChangesPending(force: true);
         }
 
         if (!$runMigrations && !$applyProjectConfigChanges) {
@@ -445,6 +461,7 @@ class AppController extends Controller
             default => 1597,
         };
 
+        $this->response->setNoCacheHeaders();
         return $this->renderTemplate('_special/licensing-issues.twig', [
             'issues' => $issues,
             'hash' => $hash,
@@ -759,9 +776,10 @@ class AppController extends Controller
         $elementHtml = [];
 
         foreach ($criteria as $criterion) {
-            /** @var string|ElementInterface $elementType */
+            /** @var class-string<ElementInterface> $elementType */
             $elementType = $criterion['type'];
             $id = $criterion['id'];
+            $fieldId = $criterion['fieldId'] ?? null;
             $ownerId = $criterion['ownerId'] ?? null;
             $siteId = $criterion['siteId'];
             $instances = $criterion['instances'];
@@ -779,7 +797,9 @@ class AppController extends Controller
                 ->status(null);
 
             if ($query instanceof NestedElementQueryInterface) {
-                $query->ownerId($ownerId);
+                $query
+                    ->fieldId($fieldId)
+                    ->ownerId($ownerId);
             }
 
             $elements = $query->all();
@@ -829,7 +849,7 @@ class AppController extends Controller
         $menuItemHtml = [];
 
         foreach ($components as $componentInfo) {
-            /** @var string|Chippable $componentType */
+            /** @var class-string<Chippable> $componentType */
             $componentType = $componentInfo['type'];
             $id = $componentInfo['id'];
 

@@ -77,8 +77,15 @@ class CraftElementLabel extends HTMLElement {
   createTooltip() {
     this.tooltip = document.createElement('craft-tooltip');
     this.tooltip.setAttribute('self-managed', 'true');
-    this.tooltip.setAttribute('aria-label', this.innerText);
+    this.tooltip.setAttribute('text', this.innerText);
     this.tooltip.setAttribute('aria-hidden', 'true');
+
+    // Make sure tooltips created show ellipses
+    Object.assign(this.tooltip.style, {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    });
 
     // If there's a context label, make it a little nicer
     const contextLabel = this.querySelector('.context-label');
@@ -89,7 +96,8 @@ class CraftElementLabel extends HTMLElement {
       );
     }
 
-    this.labelLink.appendChild(this.tooltip);
+    this.insertBefore(this.tooltip, this.labelLink);
+    this.tooltip.appendChild(this.labelLink);
   }
 
   disconnectedCallback() {

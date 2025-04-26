@@ -63,14 +63,6 @@ class FullNameField extends TextField
     /**
      * @inheritdoc
      */
-    public function previewable(): bool
-    {
-        return true;
-    }
-
-    /**
-     * @inheritdoc
-     */
     public function formHtml(?ElementInterface $element = null, bool $static = false): ?string
     {
         if (

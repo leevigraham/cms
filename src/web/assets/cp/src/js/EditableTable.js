@@ -516,6 +516,16 @@ Craft.EditableTable = Garnish.Base.extend(
                 .appendTo($cell);
               break;
 
+            case 'icon':
+              Craft.ui
+                .createIconPicker({
+                  name: name,
+                  value: typeof value !== 'object' ? value : null,
+                  small: true,
+                })
+                .appendTo($cell);
+              break;
+
             case 'color':
               Craft.ui
                 .createColorInput({
@@ -630,8 +640,6 @@ Craft.EditableTable = Garnish.Base.extend(
             $('<a/>', {
               class: 'move icon',
               title: Craft.t('app', 'Reorder'),
-              role: 'button',
-              type: 'button',
             })
           )
           .append($actionsBtn)
@@ -642,12 +650,12 @@ Craft.EditableTable = Garnish.Base.extend(
 
         menu.addItems([
           {
-            icon: 'arrow-up',
+            icon: async () => await Craft.ui.icon('arrow-up'),
             label: Craft.t('app', 'Move up'),
             attributes: {'data-action': 'moveUp'},
           },
           {
-            icon: 'arrow-down',
+            icon: async () => await Craft.ui.icon('arrow-down'),
             label: Craft.t('app', 'Move down'),
             attributes: {'data-action': 'moveDown'},
           },
@@ -716,7 +724,7 @@ Craft.EditableTable.Row = Garnish.Base.extend(
 
       this.$textareas = $();
       this.niceTexts = [];
-      var textareasByColId = {};
+      var textInputsByColId = {};
 
       var i = 0;
       var colId, col, td, $checkbox;
@@ -731,42 +739,41 @@ Craft.EditableTable.Row = Garnish.Base.extend(
 
         if (Craft.inArray(col.type, Craft.EditableTable.textualColTypes)) {
           $('.editable-table-preview', td).remove();
-          const $textarea = $('textarea', td);
-          this.$textareas = this.$textareas.add($textarea);
+          let $input;
+          if (col.type === 'color') {
+            $input = $('input.color-input', td);
+          } else {
+            $input = $('textarea', td);
+            this.$textareas = this.$textareas.add($input);
+            this.niceTexts.push(
+              new Garnish.NiceText($input, {
+                onHeightChange: this.onTextareaHeightChange.bind(this),
+              })
+            );
+          }
 
-          this.addListener($textarea, 'focus', 'onTextareaFocus');
-          this.addListener($textarea, 'mousedown', 'ignoreNextTextareaFocus');
-
-          this.niceTexts.push(
-            new Garnish.NiceText($textarea, {
-              onHeightChange: this.onTextareaHeightChange.bind(this),
-            })
-          );
+          this.addListener($input, 'focus', 'onTextareaFocus');
+          this.addListener($input, 'mousedown', 'ignoreNextTextareaFocus');
 
           this.addListener(
-            $textarea,
+            $input,
             'keypress',
             {tdIndex: i, type: col.type},
             'handleKeypress'
           );
-          this.addListener(
-            $textarea,
-            'input',
-            {type: col.type},
-            'validateValue'
-          );
-          $textarea.trigger('input');
+          this.addListener($input, 'input', {type: col.type}, 'validateValue');
+          $input.trigger('input');
 
           if (col.type !== 'multiline') {
             this.addListener(
-              $textarea,
+              $input,
               'paste',
               {tdIndex: i, type: col.type},
               'handlePaste'
             );
           }
 
-          textareasByColId[colId] = $textarea;
+          textInputsByColId[colId] = $input;
         } else if (col.type === 'checkbox') {
           $checkbox = $('input[type="checkbox"]', td);
 
@@ -825,13 +832,13 @@ Craft.EditableTable.Row = Garnish.Base.extend(
 
         if (
           col.autopopulate &&
-          typeof textareasByColId[col.autopopulate] !== 'undefined' &&
-          !textareasByColId[colId].val() &&
-          !textareasByColId[col.autopopulate].val()
+          typeof textInputsByColId[col.autopopulate] !== 'undefined' &&
+          !textInputsByColId[colId].val() &&
+          !textInputsByColId[col.autopopulate].val()
         ) {
           new Craft.HandleGenerator(
-            textareasByColId[colId],
-            textareasByColId[col.autopopulate],
+            textInputsByColId[colId],
+            textInputsByColId[col.autopopulate],
             {
               allowNonAlphaStart: true,
             }

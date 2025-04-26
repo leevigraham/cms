@@ -8,11 +8,13 @@
 namespace craft\fields;
 
 use Craft;
+use craft\base\CrossSiteCopyableFieldInterface;
 use craft\base\ElementInterface;
 use craft\base\Field;
 use craft\base\InlineEditableFieldInterface;
 use craft\base\MergeableFieldInterface;
 use craft\base\SortableFieldInterface;
+use craft\elements\Entry;
 use craft\fields\conditions\MoneyFieldConditionRule;
 use craft\gql\types\Money as MoneyType;
 use craft\helpers\Cp;
@@ -37,7 +39,7 @@ use yii\db\Schema;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 4.0.0
  */
-class Money extends Field implements InlineEditableFieldInterface, SortableFieldInterface, MergeableFieldInterface
+class Money extends Field implements InlineEditableFieldInterface, SortableFieldInterface, MergeableFieldInterface, CrossSiteCopyableFieldInterface
 {
     /**
      * @inheritdoc
@@ -146,6 +148,19 @@ class Money extends Field implements InlineEditableFieldInterface, SortableField
      */
     public function getSettingsHtml(): ?string
     {
+        return $this->settingsHtml(false);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getReadOnlySettingsHtml(): ?string
+    {
+        return $this->settingsHtml(true);
+    }
+
+    private function settingsHtml(bool $readOnly): string
+    {
         foreach (['defaultValue', 'min', 'max'] as $attr) {
             if ($this->$attr !== null) {
                 $value = MoneyHelper::toDecimal(new MoneyLibrary($this->$attr, new Currency($this->currency)));
@@ -157,6 +172,7 @@ class Money extends Field implements InlineEditableFieldInterface, SortableField
             'field' => $this,
             'currencies' => $this->_isoCurrencies,
             'subUnits' => $this->subunits(),
+            'readOnly' => $readOnly,
         ]);
     }
 
@@ -297,7 +313,7 @@ class Money extends Field implements InlineEditableFieldInterface, SortableField
             $value = MoneyHelper::toNumber($value);
         }
 
-        $decimals = $decimals ?? $this->subunits();
+        $decimals ??= $this->subunits();
 
         $defaultValue = null;
         if (isset($this->defaultValue)) {
@@ -338,7 +354,7 @@ class Money extends Field implements InlineEditableFieldInterface, SortableField
      */
     public function subunits(?Currency $currency = null): int
     {
-        $currency = $currency ?? new Currency($this->currency);
+        $currency ??= new Currency($this->currency);
         return $this->_isoCurrencies->subunitFor($currency);
     }
 
@@ -366,6 +382,18 @@ class Money extends Field implements InlineEditableFieldInterface, SortableField
     public function getPreviewHtml(mixed $value, ElementInterface $element): string
     {
         return MoneyHelper::toString($value) ?: '';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function previewPlaceholderHtml(mixed $value, ?ElementInterface $element): string
+    {
+        if (!$value) {
+            $value = new MoneyLibrary(1234, new Currency($this->currency));
+        }
+
+        return $this->getPreviewHtml($value, $element ?? new Entry());
     }
 
     /**

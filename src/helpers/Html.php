@@ -12,7 +12,9 @@ use craft\elements\Asset;
 use craft\errors\InvalidHtmlTagException;
 use craft\image\SvgAllowedAttributes;
 use craft\web\View;
+use DOMElement;
 use enshrined\svgSanitize\Sanitizer;
+use Symfony\Component\DomCrawler\Crawler;
 use Throwable;
 use yii\base\Exception;
 use yii\base\InvalidArgumentException;
@@ -26,6 +28,11 @@ use yii\base\InvalidConfigException;
  */
 class Html extends \yii\helpers\Html
 {
+    /**
+     * @since 5.6.0
+     */
+    public const TITLE_TAG_RE = '/<title(\s+([\s\S]*?))?>.*?<\/title>\s*/is';
+
     /**
      * @var array List of tag attributes that should be specially handled when their values are of array type.
      * In particular, if the value of the `data` attribute is `['name' => 'xyz', 'age' => 13]`, two attributes
@@ -82,6 +89,50 @@ class Html extends \yii\helpers\Html
     public static function encodeSpaces(string $str): string
     {
         return str_replace(' ', '%20', $str);
+    }
+
+    /**
+     * Disables any form inputs in the given HTML.
+     *
+     * @param callable|string|null $html
+     * @return string|null
+     * @since 5.6.0
+     */
+    public static function disableInputs(callable|string|null $html): ?string
+    {
+        if (is_callable($html)) {
+            // Call it to get the HTML, but disregard the JS
+            Craft::$app->getView()->startJsBuffer();
+            try {
+                $html = $html();
+            } finally {
+                Craft::$app->getView()->clearJsBuffer();
+            }
+        }
+
+        if ($html === null || $html === '') {
+            return $html;
+        }
+
+        $crawler = new Crawler("<html><body>$html</body></html>");
+
+        $inputContainers = $crawler->filter('.field > .input');
+        foreach ($inputContainers as $inputContainer) {
+            /** @var DOMElement $inputContainer */
+            $class = array_filter(explode(' ', $inputContainer->getAttribute('class')));
+            $class = array_unique([...$class, 'disabled']);
+            $inputContainer->setAttribute('class', implode(' ', $class));
+        }
+
+        $inputs = $crawler->filter('input,textarea,select,button:not(.fieldtoggle)');
+        foreach ($inputs as $input) {
+            /** @var DOMElement $input */
+            if (!$input->hasAttribute('disabled')) {
+                $input->setAttribute('disabled', '');
+            }
+        }
+
+        return $crawler->filter('body')->first()->html();
     }
 
     /**
@@ -628,9 +679,7 @@ class Html extends \yii\helpers\Html
     {
         if (!isset(self::$_sortedDataAttributes)) {
             self::$_sortedDataAttributes = array_merge(static::$dataAttributes);
-            usort(self::$_sortedDataAttributes, function(string $a, string $b): int {
-                return strlen($b) - strlen($a);
-            });
+            usort(self::$_sortedDataAttributes, fn(string $a, string $b): int => strlen($b) - strlen($a));
         }
         return self::$_sortedDataAttributes;
     }
@@ -919,7 +968,7 @@ class Html extends \yii\helpers\Html
      * Replaces textareas with markers
      *
      * @param string $html
-     * @return array
+     * @return array<string, string>
      */
     private static function _escapeTextareas(string &$html): array
     {
@@ -962,8 +1011,7 @@ class Html extends \yii\helpers\Html
      * Replaces markers with textareas.
      *
      * @param string $html
-     * @param array $markers
-     * @return string
+     * @param array<string, string> $markers
      */
     private static function _restoreTextareas(string $html, array $markers): string
     {
@@ -999,7 +1047,7 @@ class Html extends \yii\helpers\Html
         $svg = $sanitizer->sanitize($svg);
         // Remove comments, title & desc
         $svg = preg_replace('/<!--.*?-->\s*/s', '', $svg);
-        $svg = preg_replace('/<title>.*?<\/title>\s*/is', '', $svg);
+        $svg = preg_replace(self::TITLE_TAG_RE, '', $svg);
         return preg_replace('/<desc>.*?<\/desc>\s*/is', '', $svg);
     }
 
@@ -1186,13 +1234,13 @@ class Html extends \yii\helpers\Html
             $svg = file_get_contents($svg);
 
             // This came from a file path, so pretty good chance that the SVG can be trusted.
-            $sanitize = $sanitize ?? false;
-            $namespace = $namespace ?? false;
+            $sanitize ??= false;
+            $namespace ??= false;
         }
 
         // Sanitize and namespace the SVG by default
-        $sanitize = $sanitize ?? true;
-        $namespace = $namespace ?? true;
+        $sanitize ??= true;
+        $namespace ??= true;
 
         // Sanitize?
         if ($sanitize) {

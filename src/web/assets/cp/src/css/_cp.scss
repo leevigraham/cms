@@ -22,10 +22,9 @@ $badgeColor: var(--gray-800);
   --l: 18px;
   --xl: 24px;
   --padding: var(--xl);
-  --neg-padding: calc(var(--padding) * -1);
+  --neg-padding: calc(var(--xl) * -1);
   --sidebar-width: #{$sidebarWidth};
   --global-sidebar-width: #{$sidebarWidth};
-  --header-height: calc(44rem / 16);
   --details-width: #{$detailsWidth};
 
   // Sidebar
@@ -61,13 +60,6 @@ body {
   :focus {
     outline-style: solid;
     outline-color: transparent;
-    box-shadow: var(--focus-ring);
-  }
-}
-
-.reduce-focus-visibility {
-  :focus:not(:focus-visible) {
-    box-shadow: none;
   }
 
   :focus-visible {
@@ -94,7 +86,7 @@ body {
   }
 }
 
-#global-skip-link {
+.skip-link--global {
   @media only screen and (min-width: $minFullUiWidth) {
     @include mixins.two-color-focus-ring;
   }
@@ -126,19 +118,21 @@ $systemInfoHoverBgColor: color.adjust(mixins.$grey800, $lightness: -10%);
   display: grid;
   grid-template-columns: var(--nav-item-prefix-width) auto;
   gap: 10px;
-  height: calc(45rem / 16);
+  height: 100%;
   padding-block: 0;
   padding-inline: var(--nav-item-gutter-width);
   position: relative;
-  flex: 0 0 calc(45rem / 16);
   flex-direction: row;
   align-items: center;
   color: currentcolor;
-  border-block-end: 1px solid var(--hairline-color);
   background-clip: padding-box;
 
   &::after {
     display: none;
+  }
+
+  #global-sidebar & {
+    border-block-end: 1px solid var(--hairline-color);
   }
 }
 
@@ -275,8 +269,6 @@ a#system-info {
 }
 
 #edition-logo {
-  position: relative;
-  inset-block-start: -1px;
   user-select: none;
   border: 1px solid var(--gray-600);
   border-radius: 3px;
@@ -284,11 +276,10 @@ a#system-info {
   box-sizing: content-box;
   font-size: 11px;
   padding-block: 6px;
-  padding-inline: 7px;
+  padding-inline: 7px 5px;
   line-height: 8px;
   font-weight: 600;
   letter-spacing: 1.7px;
-  padding-inline-end: 5px;
   text-transform: uppercase;
 }
 
@@ -316,9 +307,16 @@ a#system-info {
   color: var(--error-color);
 
   & > li {
-    padding-block: 10px;
+    padding-block: 7px 8px;
     padding-inline: 24px;
     box-shadow: inset 0 -1px 0 0 var(--red-100);
+    min-height: var(--header-height);
+    display: flex;
+    align-items: center;
+
+    span[data-icon]::before {
+      margin-block-start: -3px !important;
+    }
 
     .resolvable-alert-buttons {
       margin-block-start: var(--m);
@@ -372,11 +370,20 @@ a#system-info {
 li.crumb .btn.menubtn,
 .btn.action-btn {
   padding: 0;
-  width: var(--touch-target-size);
-  min-height: var(--touch-target-size);
 
   &:not(:hover, :active, [aria-expanded='true']) {
     background-color: transparent;
+  }
+
+  &:not(.m) {
+    width: var(--touch-target-size);
+    height: var(--touch-target-size);
+    min-height: auto;
+  }
+
+  &.m {
+    width: var(--ui-control-height);
+    height: var(--ui-control-height);
   }
 }
 
@@ -551,13 +558,6 @@ li.crumb {
   }
 
   .chip {
-    padding: 0;
-    background-color: transparent;
-
-    --custom-bg-color: initial !important;
-    --custom-text-color: initial !important;
-    --custom-sel-bg-color: initial !important;
-
     .label-link {
       max-width: 15em;
 
@@ -790,39 +790,43 @@ li.breadcrumb-toggle-wrapper {
   }
 
   .notification {
-    display: flex;
     position: relative;
     @include mixins.pane;
-    padding-block: 10px;
-    padding-inline: 14px;
     border-radius: var(--large-border-radius);
     box-shadow:
       0 0 0 1px color.adjust(mixins.$grey1000, $alpha: -0.85),
       0 2px 12px color.adjust(mixins.$grey1000, $alpha: -0.85);
 
-    --color: var(--notice-color);
-
     &[data-type='success'] {
-      --color: var(--success-color);
+      .notification-icon {
+        --icon-color: var(--success-color);
+      }
     }
 
     &[data-type='error'] {
-      --color: var(--error-color);
+      .notification-icon {
+        --icon-color: var(--error-color);
+      }
     }
 
     & + .notification {
       margin-block-start: 12px;
     }
 
+    .notification-inner {
+      display: flex;
+      padding-block: 10px;
+      padding-inline: 14px;
+    }
+
     .notification-icon {
-      width: 18px;
-      margin-block-start: -2px;
-      margin-inline-end: 10px;
-      font-size: 18px;
-      color: var(--color);
+      --icon-color: var(--notice-color);
+      margin-block-start: 2px;
     }
 
     .notification-main {
+      margin: -10px;
+      padding: 10px;
       overflow: hidden;
     }
 
@@ -840,10 +844,6 @@ li.breadcrumb-toggle-wrapper {
 
       .notification-details {
         margin-block-start: var(--xs);
-
-        .chip {
-          border: 1px solid mixins.$hairlineColor;
-        }
       }
     }
 
@@ -852,6 +852,68 @@ li.breadcrumb-toggle-wrapper {
       inset-block-start: -2px;
       margin-inline-start: 10px;
     }
+  }
+
+  .copied-elements-notification {
+    padding: 2px;
+    background: linear-gradient(
+      135deg,
+      var(--fuchsia-600),
+      var(--violet-600),
+      var(--indigo-600)
+    );
+
+    .notification-icon {
+      --icon-color: var(--fuchsia-500);
+    }
+
+    .notification-inner {
+      border-radius: var(--small-border-radius);
+      background: var(--white);
+    }
+
+    .copied-elements {
+      overflow: hidden;
+      margin-block-end: -10px;
+      padding-block-end: 10px;
+      position: relative;
+      pointer-events: none;
+
+      .chip:not(:first-child) {
+        position: absolute;
+
+        &::after {
+          content: '';
+          position: absolute;
+          display: block;
+          inset: -1px;
+          background: rgb(255 255 255 / var(--overlay-opacity));
+        }
+      }
+    }
+  }
+}
+
+.paste-btn {
+  background: linear-gradient(
+    135deg,
+    var(--fuchsia-600),
+    var(--violet-600),
+    var(--indigo-600)
+  );
+  color: var(--white);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+
+  --focus-ring: var(--focus-ring-outset);
+
+  &:hover,
+  &.loading {
+    background: linear-gradient(
+      135deg,
+      var(--fuchsia-700),
+      var(--violet-700),
+      var(--indigo-700)
+    );
   }
 }
 
@@ -891,7 +953,7 @@ li.breadcrumb-toggle-wrapper {
   padding-block: 5px;
   padding-inline: var(--padding);
   position: relative;
-  z-index: 2;
+  isolation: isolate;
   box-sizing: border-box;
   background-color: color.adjust(mixins.$grey300, $alpha: -1);
   box-shadow: 0 1px 0 color.adjust(mixins.$grey800, $alpha: -1);
@@ -922,7 +984,7 @@ li.breadcrumb-toggle-wrapper {
   }
 
   h1 {
-    line-height: 34px;
+    line-height: 1.3;
     margin-block: 0;
     min-width: 0;
   }
@@ -934,6 +996,13 @@ li.breadcrumb-toggle-wrapper {
 }
 
 #page-title {
+  --page-title-columns: 1fr 34px;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: var(--page-title-columns);
+  align-items: center;
+  gap: var(--s);
+
   &.has-toolbar {
     @media only screen and (min-width: $minHorizontalUiWidth) {
       min-width: calc(#{$sidebarWidth} - var(--xl) - var(--s)) !important;
@@ -958,8 +1027,9 @@ li.breadcrumb-toggle-wrapper {
 
 #toolbar {
   flex: 1;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  min-height: 34px;
 
   .icon::before,
   .texticon::before,
@@ -983,11 +1053,16 @@ li.breadcrumb-toggle-wrapper {
   }
 }
 
+#revision-indicators {
+  min-width: 34px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  align-self: start;
+}
+
 #action-buttons {
-  .action-btn {
-    width: var(--ui-control-height);
-    height: var(--ui-control-height);
-  }
+  flex-shrink: 0;
 
   @media only screen and (width <= 400px) {
     .btngroup .btn:first-child {
@@ -1103,16 +1178,23 @@ li.breadcrumb-toggle-wrapper {
 
 .content-pane {
   @include mixins.pane;
-  border-radius: var(--large-border-radius);
+
+  --border-radius: var(--large-border-radius);
+  border-radius: var(--border-radius);
   position: relative;
   background-clip: padding-box;
-  padding-block: var(--xl);
-  padding-inline: var(--padding);
+  padding: var(--padding);
+
+  --pane-padding: var(--padding);
   word-wrap: break-word;
 
   & > hr {
     margin-inline: calc(var(--xl) * -1);
   }
+}
+
+.content-pane:has(.flex-fields) {
+  container-type: inline-size;
 }
 
 #footer,
@@ -1138,7 +1220,7 @@ li.breadcrumb-toggle-wrapper {
   position: sticky;
   inset-block-end: 0;
   z-index: 1;
-  margin-block: calc(var(--s) + 1px) calc(var(--xl) * -1 + 2px);
+  margin-block: var(--padding) calc(var(--padding) * -1 + 2px);
   margin-inline: calc(var(--padding) * -1 + 2px);
   background-color: var(--gray-050);
   border-radius: var(--small-border-radius);
@@ -1614,7 +1696,8 @@ li.breadcrumb-toggle-wrapper {
         &.active-drop-target {
           cursor: default;
           background-color: var(--gray-500);
-          @include mixins.dark-btn-light-bg-focus-ring;
+
+          --focus-ring: var(--focus-ring-outset);
 
           &,
           & + .toggle {
@@ -1692,7 +1775,7 @@ li.breadcrumb-toggle-wrapper {
 
         .badge {
           margin-inline: 10px -4px;
-          margin-block: 0 0;
+          margin-block: 0;
           flex-shrink: 1;
           padding-block: 0;
           padding-inline: 6px;
@@ -1795,11 +1878,7 @@ li.breadcrumb-toggle-wrapper {
 }
 
 /* flexbox field layouts */
-#content :not(.meta) > .flex-fields,
-#content > .flex-fields,
-.so-content .flex-fields,
-.lp-content .flex-fields,
-.draghelper .flex-fields {
+.flex-fields {
   --row-gap: var(--xl);
   display: flex;
   flex-wrap: wrap;
@@ -1807,6 +1886,7 @@ li.breadcrumb-toggle-wrapper {
   margin-block: 0 calc(var(--padding) * -1);
   margin-inline: calc(var(--padding) * -1);
   width: calc(100% + var(--padding) * 2);
+  container-type: inline-size;
 
   & > :not(.error-summary) {
     margin-block: 0 var(--row-gap) !important;
@@ -1853,16 +1933,12 @@ li.breadcrumb-toggle-wrapper {
       }
     }
   }
-}
 
-#content :not(.meta) > .flex-fields,
-#content > .flex-fields,
-.draghelper.drag-in-content .flex-fields {
   & > :not(h2, hr, .line-break) {
     &,
     &:last-child {
-      // 4 cols for >= 1536px
-      @media only screen and (min-width: $minXlUiWidth) {
+      // 4 cols for container width >= 800px
+      @container (min-width: calc(800rem/16)) {
         &.width-25 {
           width: 25%;
         }
@@ -1876,27 +1952,9 @@ li.breadcrumb-toggle-wrapper {
         }
       }
 
-      // 2 cols for 600 - 1535px
-      @media only screen and (min-width: $minDesktopWidth) and (max-width: $minXlUiWidth - calc(1rem/16)) {
-        &.width-25,
-        &.width-50 {
-          width: 50%;
-        }
-      }
-    }
-  }
-}
-
-.so-content .flex-fields,
-.lp-content .flex-fields,
-.draghelper.drag-in-slideout .flex-fields {
-  & > :not(h2, hr, .line-break) {
-    &,
-    &:last-child {
-      // 2 cols for >= 1200
-      @media only screen and (min-width: $minDesktopWidth * 2) {
-        &.width-25,
-        &.width-50 {
+      // 2 cols when container width >= 400px and < 800px
+      @container (min-width: calc(400rem/16)) and (max-width: calc(800rem/16 - 1px)) {
+        &.width-25 {
           width: 50%;
         }
       }

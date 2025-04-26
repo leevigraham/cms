@@ -21,6 +21,7 @@ use craft\helpers\Cp;
 use craft\helpers\DateTimeHelper;
 use craft\helpers\ElementHelper;
 use craft\helpers\Html;
+use craft\helpers\StringHelper;
 use craft\helpers\UrlHelper;
 use craft\models\Section;
 use craft\models\Section_SiteSettings;
@@ -187,9 +188,9 @@ class EntriesController extends BaseEntriesController
         DateTimeHelper::resume();
 
         if (!$success) {
-            return $this->asModelFailure($entry, Craft::t('app', 'Couldn’t create {type}.', [
+            return $this->asModelFailure($entry, StringHelper::upperCaseFirst(Craft::t('app', 'Couldn’t create {type}.', [
                 'type' => Entry::lowerDisplayName(),
-            ]), 'entry');
+            ])), 'entry');
         }
 
         // Set its position in the structure if a before/after param was passed
@@ -465,6 +466,8 @@ class EntriesController extends BaseEntriesController
             ->id($entryIds)
             ->status(null)
             ->drafts(null)
+            ->site('*')
+            ->unique()
             ->all();
         if (empty($entries)) {
             throw new BadRequestHttpException('Cannot find the entries to move to the new section.');

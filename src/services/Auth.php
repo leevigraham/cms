@@ -20,9 +20,11 @@ use craft\helpers\ArrayHelper;
 use craft\helpers\Component as ComponentHelper;
 use craft\helpers\DateTimeHelper;
 use craft\helpers\Json;
+use craft\helpers\Session as SessionHelper;
 use craft\models\UserGroup;
 use craft\records\WebAuthn as WebAuthnRecord;
 use craft\web\Session;
+use craft\web\View;
 use DateTime;
 use GuzzleHttp\Psr7\ServerRequest;
 use ParagonIE\ConstantTime\Base64UrlSafe;
@@ -42,7 +44,7 @@ use yii\base\InvalidArgumentException;
 /**
  * User authentication service.
  *
- * An instance of the service is globally accessible in Craft via [[\craft\base\ApplicationTrait::getAuth()|`Craft::$app->auth`]].
+ * An instance of the service is globally accessible in Craft via [[\craft\base\ApplicationTrait::getAuth()|`Craft::$app->getAuth()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 5.0.0
@@ -149,14 +151,13 @@ class Auth extends Component
     {
         $this->_user = $user ?? false;
         $this->_sessionDuration = $user ? ($sessionDuration ?? Craft::$app->getConfig()->getGeneral()->userSessionDuration) : false;
-        $session = Craft::$app->getSession();
 
         if ($user) {
-            $session->set($this->userIdParam, $user->id);
-            $session->set($this->sessionDurationParam, $this->_sessionDuration);
+            SessionHelper::set($this->userIdParam, $user->id);
+            SessionHelper::set($this->sessionDurationParam, $this->_sessionDuration);
         } else {
-            $session->remove($this->userIdParam);
-            $session->remove($this->sessionDurationParam);
+            SessionHelper::remove($this->userIdParam);
+            SessionHelper::remove($this->sessionDurationParam);
         }
     }
 
@@ -174,7 +175,19 @@ class Auth extends Component
         }
 
         $method = $this->getAvailableMethods()[0] ?? null;
-        return $method?->getAuthFormHtml();
+        if (!$method) {
+            return '';
+        }
+
+        $view = Craft::$app->getView();
+        $templateMode = $view->getTemplateMode();
+        $view->setTemplateMode(View::TEMPLATE_MODE_CP);
+
+        try {
+            return $method->getAuthFormHtml();
+        } finally {
+            $view->setTemplateMode($templateMode);
+        }
     }
 
     /**
@@ -197,7 +210,15 @@ class Auth extends Component
         // success!
         if ($user) {
             $this->setUser(null);
-            Craft::$app->getUser()->login($user, $sessionDuration);
+
+            // if we're impersonating, pass the user we're impersonating to the complete the login
+            $userSession = Craft::$app->getUser();
+            if ($userSession->getImpersonator() !== null) {
+                /** @var User $user */
+                $user = Craft::$app->getUser()->getIdentity();
+            }
+
+            $userSession->login($user, $sessionDuration);
         }
 
         return true;
@@ -428,7 +449,7 @@ class Auth extends Component
             excludeCredentials: $excludeCredentials
         );
 
-        Craft::$app->getSession()->set($this->passkeyCreationOptionsParam, Json::encode($publicKeyCredentialCreationOptions));
+        SessionHelper::set($this->passkeyCreationOptionsParam, Json::encode($publicKeyCredentialCreationOptions));
 
         return $publicKeyCredentialCreationOptions;
     }

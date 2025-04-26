@@ -9,6 +9,7 @@ namespace craft\helpers;
 
 use Closure;
 use Craft;
+use craft\attributes\EnvName;
 use craft\behaviors\SessionBehavior;
 use craft\cache\FileCache;
 use craft\config\DbConfig;
@@ -143,8 +144,7 @@ class App
      * For example, if an object has a `fooBar` property, and `X`/`X_` is passed as the prefix, the resulting array
      * may contain a `fooBar` key set to an `X_FOO_BAR` environment variable value, if it exists.
      *
-     * @param string $class The class name
-     * @phpstan-param class-string $class
+     * @param class-string $class The class name
      * @param string|null $envPrefix The environment variable name prefix
      * @return array
      * @phpstan-return array<string, mixed>
@@ -161,12 +161,23 @@ class App
                 continue;
             }
 
-            $propName = $prop->getName();
-            $envName = $envPrefix . strtoupper(StringHelper::toSnakeCase($propName));
-            $envValue = static::env($envName);
+            $envName = null;
+
+            foreach ($prop->getAttributes(EnvName::class) as $attribute) {
+                /** @var EnvName $envName */
+                $envName = $attribute->newInstance();
+                $envName = $envName->name;
+                break;
+            }
+
+            if (!$envName) {
+                $envName = strtoupper(StringHelper::toSnakeCase($prop->getName()));
+            }
+
+            $envValue = static::env(sprintf('%s%s', $envPrefix, $envName));
 
             if ($envValue !== null) {
-                $envConfig[$propName] = $envValue;
+                $envConfig[$prop->getName()] = $envValue;
             }
         }
 
@@ -201,7 +212,7 @@ class App
             return null;
         }
 
-        if (preg_match('/^\$(\w+)$/', $value, $matches)) {
+        if (preg_match('/^\$(\w+)(\/.*)?/', $value, $matches)) {
             $env = static::env($matches[1]);
 
             if ($env === null) {
@@ -209,7 +220,7 @@ class App
                 return null;
             }
 
-            $value = $env;
+            $value = $env . ($matches[2] ?? '');
         }
 
         if (is_string($value) && str_starts_with($value, '@')) {
@@ -697,13 +708,9 @@ class App
      */
     public static function checkForValidIconv(): bool
     {
-        if (isset(self::$_iconv)) {
-            return self::$_iconv;
-        }
-
         // Check if iconv is installed. Note we can't just use HTMLPurifier_Encoder::iconvAvailable() because they
         // don't consider iconv "installed" if it's there but "unusable".
-        return self::$_iconv = (function_exists('iconv') && HTMLPurifier_Encoder::testIconvTruncateBug() === HTMLPurifier_Encoder::ICONV_OK);
+        return self::$_iconv ?? (self::$_iconv = (function_exists('iconv') && HTMLPurifier_Encoder::testIconvTruncateBug() === HTMLPurifier_Encoder::ICONV_OK));
     }
 
     /**
@@ -720,8 +727,7 @@ class App
     /**
      * Returns a humanized class name.
      *
-     * @param string $class
-     * @phpstan-param class-string $class
+     * @param class-string $class
      * @return string
      */
     public static function humanizeClass(string $class): string
@@ -1047,6 +1053,7 @@ class App
             ],
             'replyTo' => App::parseEnv($settings->replyToEmail),
             'template' => App::parseEnv($settings->template),
+            'siteOverrides' => $settings->siteOverrides,
             'transport' => $adapter->defineTransport(),
         ];
     }
@@ -1158,11 +1165,12 @@ class App
             'authTimeout' => $generalConfig->userSessionDuration ?: null,
             'identityCookie' => Craft::cookieConfig(['name' => $stateKeyPrefix . '_identity']),
             'usernameCookie' => Craft::cookieConfig(['name' => $stateKeyPrefix . '_username']),
-            'idParam' => $stateKeyPrefix . '__id',
-            'tokenParam' => $stateKeyPrefix . '__token',
-            'authTimeoutParam' => $stateKeyPrefix . '__expire',
             'absoluteAuthTimeoutParam' => $stateKeyPrefix . '__absoluteExpire',
+            'authTimeoutParam' => $stateKeyPrefix . '__expire',
+            'idParam' => $stateKeyPrefix . '__id',
+            'impersonatorIdParam' => $stateKeyPrefix . '__impersonator_id',
             'returnUrlParam' => $stateKeyPrefix . '__returnUrl',
+            'tokenParam' => $stateKeyPrefix . '__token',
         ];
     }
 
@@ -1179,8 +1187,8 @@ class App
         ];
 
         $request = Craft::$app->getRequest();
-
-        if ($request->getIsCpRequest()) {
+        if (!$request->getIsConsoleRequest()) {
+            // Check these headers for site requests too, in case we're rendering a system fallback template
             $headers = $request->getHeaders();
             $config['registeredAssetBundles'] = array_filter(explode(',', $headers->get('X-Registered-Asset-Bundles', '')));
             $config['registeredJsFiles'] = array_filter(explode(',', $headers->get('X-Registered-Js-Files', '')));
@@ -1298,6 +1306,21 @@ class App
     }
 
     /**
+     * Returns the cache key that licensing info should be stored with.
+     *
+     * @return string
+     * @internal
+     */
+    public static function licenseInfoCacheKey(): string
+    {
+        $request = Craft::$app->getRequest();
+        if ($request->getIsConsoleRequest()) {
+            return 'licenseInfo';
+        }
+        return sprintf('licenseInfo@%s', $request->getHostName());
+    }
+
+    /**
      * Returns all known licensing issues.
      *
      * @param bool $withUnresolvables
@@ -1314,7 +1337,8 @@ class App
 
         $updatesService = Craft::$app->getUpdates();
         $cache = Craft::$app->getCache();
-        $isInfoCached = $cache->exists('licenseInfo') && $updatesService->getIsUpdateInfoCached();
+        $licenseInfoCacheKey = static::licenseInfoCacheKey();
+        $isInfoCached = $cache->exists($licenseInfoCacheKey) && $updatesService->getIsUpdateInfoCached();
 
         if (!$isInfoCached) {
             if (!$fetch) {
@@ -1326,7 +1350,7 @@ class App
 
         $issues = [];
 
-        $allLicenseInfo = $cache->get('licenseInfo') ?: [];
+        $allLicenseInfo = $cache->get($licenseInfoCacheKey) ?: [];
         $pluginsService = Craft::$app->getPlugins();
         $generalConfig = Craft::$app->getConfig()->getGeneral();
         $consoleUrl = rtrim(Craft::$app->getPluginStore()->craftIdEndpoint, '/');

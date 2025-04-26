@@ -57,7 +57,8 @@ jobs:
 
       - name: 'Replace composer.json with composer.json.default'
         working-directory: ${{ env.PROJECT_DIRECTORY }}
-        run: 'rm composer.json && mv composer.json.default composer.json'
+        run: 'test -f composer.json.default && rm composer.json && mv composer.json.default composer.json'
+        continue-on-error: true
 
       - name: 'Install specific Craft version'
         working-directory: ${{ env.PROJECT_DIRECTORY }}

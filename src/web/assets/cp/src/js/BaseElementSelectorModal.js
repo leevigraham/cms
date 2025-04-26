@@ -193,22 +193,24 @@ Craft.BaseElementSelectorModal = Garnish.Modal.extend(
       Garnish.uiLayerManager.addLayer(this.$sidebar);
       Garnish.uiLayerManager.registerShortcut(Garnish.ESC_KEY, () => {
         this.closeSidebar();
-
-        // If the focus is currently inside the sidebar, refocus the toggle
-        const $focusedEl = Garnish.getFocusedElement();
-        if ($.contains(this.$sidebar.get(0), $focusedEl.get(0)))
-          this.$sidebarToggleBtn.focus();
       });
     },
 
     closeSidebar: function () {
       if (!this.$sidebarToggleBtn) return;
 
+      // Remove the sidebar layer when applicable
       if (this.sidebarIsOpen()) {
         Garnish.uiLayerManager.removeLayer();
-        this.$sidebar.addClass('hidden');
-        this.$sidebarToggleBtn.attr('aria-expanded', 'false');
       }
+
+      this.$sidebar.addClass('hidden');
+      this.$sidebarToggleBtn.attr('aria-expanded', 'false');
+
+      // If the focus is currently inside the sidebar, refocus the toggle
+      const $focusedEl = Garnish.getFocusedElement();
+      if ($.contains(this.$sidebar.get(0), $focusedEl.get(0)))
+        this.$sidebarToggleBtn.focus();
 
       this.$body.removeClass('has-sidebar');
       this.$content.removeClass('has-sidebar');
@@ -447,6 +449,7 @@ Craft.BaseElementSelectorModal = Garnish.Modal.extend(
           storageKey: this.settings.storageKey,
           condition: this.settings.condition,
           referenceElementId: this.settings.referenceElementId,
+          referenceElementOwnerId: this.settings.referenceElementOwnerId,
           referenceElementSiteId: this.settings.referenceElementSiteId,
           criteria: Object.assign({}, this.settings.criteria),
           disabledElementIds: this.settings.disabledElementIds,
@@ -484,6 +487,7 @@ Craft.BaseElementSelectorModal = Garnish.Modal.extend(
       sources: null,
       condition: null,
       referenceElementId: null,
+      referenceElementOwnerId: null,
       referenceElementSiteId: null,
       criteria: null,
       multiSelect: false,

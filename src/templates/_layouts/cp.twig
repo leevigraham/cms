@@ -56,7 +56,13 @@
 {% endif %}
 {% endjs %}
 
-{% set hasSystemIcon = CraftEdition >= CraftPro and craft.rebrand.isIconUploaded %}
+{% set sidebarState = craft.app.request.rawCookies.value('Craft-' ~ craft.app.systemUid ~ ':sidebar') ?? 'expanded' %}
+{% set bodyAttributes = {
+    data: {
+        sidebar: sidebarState,
+    },
+}|merge(bodyAttributes ?? {}, recursive=true) -%}
+
 {% set fullPageForm = (fullPageForm is defined and fullPageForm) %}
 
 {% set editionName = craft.app.edition.name %}
@@ -113,7 +119,7 @@
         delta: view.getIsDeltaRegistrationActive(),
         'delta-names': view.getDeltaNames(),
         'initial-delta-values': view.getInitialDeltaValues(),
-        'modified-delta-names': view.getModifiedDeltaNames()|merge(craft.app.request.getBodyParam('modifiedDeltaNames') ?? [])|unique,
+        'modified-delta-names': view.getModifiedDeltaNames()|merge(craft.app.request.getBodyParam('modifiedDeltaNames') ?? [])|unique|values,
     },
 }|merge(mainFormAttributes ?? [], recursive=true) %}
 
@@ -126,12 +132,7 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
 {% endjs %}
 
 {% block body %}
-    {{ tag ('a', {
-        id: 'global-skip-link',
-        text: 'Skip to content'|t('app'),
-        href: '#main',
-        class: 'skip-link btn',
-    }) }}
+    {% include '_layouts/components/skip-links' %}
 
     <div id="global-container">
         {% include '_layouts/components/global-sidebar' %}
@@ -212,11 +213,12 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                             <div id="header-container">
                                 <header id="header">
                                     {% block header %}
-                                        <div id="page-title" class="flex{% if toolbar %} has-toolbar{% endif %}">
+                                        <div id="page-title" class="{% if toolbar %} has-toolbar{% endif %}">
                                             {% block pageTitle %}
                                                 {% if title is defined and title|length %}
                                                     <h1 class="screen-title" title="{{ title }}">{{ title }}</h1>
                                                 {% endif %}
+                                                <div id="revision-indicators"></div>
                                             {% endblock %}
                                         </div>
                                         {% if toolbar %}
@@ -229,7 +231,6 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                                                 {{ additionalButtons|raw }}
                                                 {{ actionButton|raw }}
                                                 {{ actionMenu|raw }}
-
                                             </div>
                                         {% endif %}
                                     {% endblock %}
@@ -240,18 +241,18 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                         <div id="main-content" class="{{ mainContentClasses|join(' ') }}">
                             {# sidebar #}
                             {% if sidebar %}
-                                <div id="sidebar-toggle-container">
-                                    <button
-                                        type="button"
-                                        id="sidebar-toggle"
-                                        class="btn menubtn chromeless"
-                                        aria-controls="sidebar-container"
-                                        aria-expanded="false"
-                                    >
-                                        {{ 'Show sidebar'|t('app') }}
-                                    </button>
-                                </div>
                                 <div id="sidebar-container">
+                                    <div id="sidebar-toggle-container">
+                                        <button
+                                                type="button"
+                                                id="sidebar-toggle"
+                                                class="btn menubtn chromeless"
+                                                aria-controls="sidebar-container"
+                                                aria-expanded="false"
+                                        >
+                                            {{ 'Show sidebar'|t('app') }}
+                                        </button>
+                                    </div>
                                     <div id="sidebar" class="sidebar">
                                         {{ sidebar|raw }}
                                     </div>
@@ -304,6 +305,7 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                                                 {% embed '_includes/disclosure-toggle' with {
                                                     id: 'details-toggle',
                                                     controls: 'details-container',
+                                                    cookieName: 'sidebar-details',
                                                 } only %}
                                                     {% block content %}
                                                         <span class="details-toggle__inner">
@@ -326,7 +328,7 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                             </div><!-- #content-container -->
 
                             {% if details is not empty %}
-                                <div id="details-container">
+                                <div id="details-container" data-state="{{  craft.app.request.rawCookies.value('Craft-' ~ craft.app.systemUid ~  ':sidebar-details')}}">
                                     <div id="details">
                                         <div class="details">
                                             {{ details|raw }}
@@ -360,8 +362,8 @@ history.replaceState(undefined, undefined, window.location.href.match(/^[^#]*/)[
                 {% endif %}
                 <div id="app-info">
                     {% set fullEditionName = '{edition} edition'|t('app', {edition: editionName}) %}
-                    <span>
-                        <span lang="en">
+                    <span class="flex items-center">
+                        <span lang="en" class="flex items-center">
                             Craft CMS
                             <span id="edition-logo" title="{{ fullEditionName }}">
                                 <span aria-hidden="true">{{ editionName }}</span>

@@ -191,6 +191,9 @@ Craft.IconPicker = Craft.BaseInputGenerator.extend(
       this.$chooseBtn.children('.label').text(Craft.t('app', 'Change'));
       this.$chooseBtn.focus();
       this.$removeBtn.removeClass('hidden');
+      if (this.$container.hasClass('small')) {
+        this.$chooseBtn.addClass('hidden');
+      }
     },
 
     removeIcon() {
@@ -198,7 +201,12 @@ Craft.IconPicker = Craft.BaseInputGenerator.extend(
       this.$input.val('');
       this.$chooseBtn.children('.label').text(Craft.t('app', 'Choose'));
       this.$removeBtn.addClass('hidden');
-      this.$chooseBtn.focus();
+      if (this.$container.hasClass('small')) {
+        this.$chooseBtn.removeClass('hidden');
+        this.$chooseBtn.focus();
+      } else {
+        this.$chooseBtn.focus();
+      }
     },
   },
   {

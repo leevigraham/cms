@@ -107,7 +107,11 @@ export default BaseDrag.extend(
       );
 
       this.dragging = true;
+      this.setScrollContainer();
       this.onDragStart();
+
+      // Mute activate events
+      Garnish.activateEventsMuted = true;
     },
 
     /**
@@ -326,6 +330,7 @@ export default BaseDrag.extend(
         top: helperPos.top,
         left: helperPos.left,
         zIndex: this.settings.helperBaseZindex + this.$draggee.length - index,
+        display: this.draggeeDisplay,
       });
 
       if (this.settings.helperOpacity != 1) {

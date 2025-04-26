@@ -32,16 +32,18 @@ use craft\events\DefineValueEvent;
 use craft\fieldlayoutelements\users\FullNameField;
 use craft\helpers\App;
 use craft\helpers\ArrayHelper;
+use craft\helpers\Cp;
 use craft\helpers\DateTimeHelper;
 use craft\helpers\Db;
 use craft\helpers\Html;
 use craft\helpers\Json;
 use craft\helpers\Session;
 use craft\helpers\StringHelper;
+use craft\helpers\Template;
 use craft\helpers\UrlHelper;
-use craft\helpers\User as UserHelper;
 use craft\i18n\Formatter;
 use craft\models\FieldLayout;
+use craft\models\Site;
 use craft\models\UserGroup;
 use craft\records\User as UserRecord;
 use craft\records\WebAuthn as WebAuthnRecord;
@@ -114,10 +116,14 @@ class User extends Element implements IdentityInterface
      */
     public const EVENT_DEFINE_FRIENDLY_NAME = 'defineFriendlyName';
 
-    public const IMPERSONATE_KEY = 'Craft.UserSessionService.prevImpersonateUserId';
+    /**
+     * @deprecated in 5.6.0. [[\craft\web\User:getImpersonatorId()]] should be used instead.
+     */
+    public const IMPERSONATE_KEY = '__impersonator_id';
 
     /**
      * @event RegisterUserActionsEvent The event that is triggered when a user’s available actions are being registered
+     * @deprecated in 5.6.0
      */
     public const EVENT_REGISTER_USER_ACTIONS = 'registerUserActions';
 
@@ -421,7 +427,6 @@ class User extends Element implements IdentityInterface
                     'orderBy' => 'dateUpdated',
                     'defaultDir' => 'desc',
                 ],
-                'id' => Craft::t('app', 'ID'),
             ];
         } else {
             $attributes = [
@@ -445,7 +450,6 @@ class User extends Element implements IdentityInterface
                     'orderBy' => 'dateUpdated',
                     'defaultDir' => 'desc',
                 ],
-                'id' => Craft::t('app', 'ID'),
             ];
         }
 
@@ -457,17 +461,20 @@ class User extends Element implements IdentityInterface
      */
     protected static function defineTableAttributes(): array
     {
-        return array_merge(parent::defineTableAttributes(), [
+        return array_merge(parent::defineTableAttributes(), array_filter([
             'email' => ['label' => Craft::t('app', 'Email')],
             'username' => ['label' => Craft::t('app', 'Username')],
             'fullName' => ['label' => Craft::t('app', 'Full Name')],
             'firstName' => ['label' => Craft::t('app', 'First Name')],
             'lastName' => ['label' => Craft::t('app', 'Last Name')],
             'groups' => ['label' => Craft::t('app', 'Groups')],
+            'affiliatedSite' => Craft::$app->getIsMultiSite() ? ['label' => Craft::t('app', 'Affiliated Site')] : null,
             'preferredLanguage' => ['label' => Craft::t('app', 'Preferred Language')],
             'preferredLocale' => ['label' => Craft::t('app', 'Preferred Locale')],
             'lastLoginDate' => ['label' => Craft::t('app', 'Last Login')],
-        ]);
+            'isCredentialed' => ['label' => Craft::t('app', 'Credentialed')],
+            'is2faEnabled' => ['label' => Craft::t('app', 'Two-Step Verification')],
+        ]));
     }
 
     /**
@@ -500,6 +507,73 @@ class User extends Element implements IdentityInterface
     /**
      * @inheritdoc
      */
+    protected static function defineCardAttributes(): array
+    {
+        $i18n = Craft::$app->getI18n();
+
+        return array_merge(parent::defineCardAttributes(), [
+            'email' => [
+                'label' => Craft::t('app', 'Email'),
+                'placeholder' => fn() => 'test@example.com',
+            ],
+            'username' => [
+                'label' => Craft::t('app', 'Username'),
+                'placeholder' => fn() => Craft::t('app', 'Username'),
+            ],
+            'firstName' => [
+                'label' => Craft::t('app', 'First Name'),
+                'placeholder' => fn() => Craft::t('app', 'First Name'),
+            ],
+            'lastName' => [
+                'label' => Craft::t('app', 'Last Name'),
+                'placeholder' => fn() => Craft::t('app', 'Last Name'),
+            ],
+            'fullName' => [
+                'label' => Craft::t('app', 'Full Name'),
+                'placeholder' => Craft::t('app', 'Full Name'),
+            ],
+            'groups' => [
+                'label' => Craft::t('app', 'Groups'),
+                'placeholder' => fn() => Craft::t('app', 'Group Name'),
+            ],
+            'affiliatedSite' => [
+                'label' => Craft::t('app', 'Affiliated Site'),
+                'placeholder' => fn() => Craft::t('app', 'Site Name'),
+            ],
+            'preferredLanguage' => [
+                'label' => Craft::t('app', 'Preferred Language'),
+                'placeholder' => fn() => $i18n->getLocaleById('en')->getDisplayName(Craft::$app->language),
+            ],
+            'preferredLocale' => [
+                'label' => Craft::t('app', 'Preferred Locale'),
+                'placeholder' => fn() => $i18n->getLocaleById('en-US')->getDisplayName(Craft::$app->language),
+            ],
+            'isCredentialed' => [
+                'label' => Craft::t('app', 'Credentialed'),
+                'placeholder' => fn() => Template::raw(Cp::statusLabelHtml([
+                    'color' => Color::Teal,
+                    'label' => Craft::t('app', 'Credentialed'),
+                    'icon' => 'check',
+                ])),
+            ],
+            'lastLoginDate' => [
+                'label' => Craft::t('app', 'Last Login'),
+                'placeholder' => fn() => (new \DateTime())->sub(new \DateInterval('P14D')),
+            ],
+            'is2faEnabled' => [
+                'label' => Craft::t('app', 'Two-Step Verification'),
+                'placeholder' => fn() => Template::raw(Cp::statusLabelHtml([
+                    'color' => Color::Teal,
+                    'label' => Craft::t('app', 'Two-Step Verification'),
+                    'icon' => 'check',
+                ])),
+            ],
+        ]);
+    }
+
+    /**
+     * @inheritdoc
+     */
     public static function eagerLoadingMap(array $sourceElements, string $handle): array|null|false
     {
         // Get the source element IDs
@@ -518,11 +592,10 @@ class User extends Element implements IdentityInterface
             return [
                 'elementType' => Address::class,
                 'map' => $map,
-                'createElement' => function(AddressQuery $query, array $result, self $source) {
+                'createElement' => fn(AddressQuery $query, array $result, self $source) =>
                     // set the addresses' owners to the source user elements
                     // (must get set before behaviors - see https://github.com/craftcms/cms/issues/13400)
-                    return $query->createElement(['owner' => $source] + $result);
-                },
+                    $query->createElement(['owner' => $source] + $result),
             ];
         }
 
@@ -562,25 +635,15 @@ class User extends Element implements IdentityInterface
             return null;
         }
 
-        /** @var static $user */
-        if ($user->getStatus() === self::STATUS_ACTIVE) {
-            return $user;
+        // Only accept active users, unless they're being impersonated
+        if (
+            $user->getStatus() !== self::STATUS_ACTIVE &&
+            !Craft::$app->getUser()->getImpersonator()
+        ) {
+            return null;
         }
 
-        // If the current user is being impersonated by an admin, ignore their status
-        if ($previousUserId = Session::get(self::IMPERSONATE_KEY)) {
-            /** @var self|null $previousUser */
-            $previousUser = self::find()
-                ->id($previousUserId)
-                ->status(null)
-                ->one();
-
-            if ($previousUser && $previousUser->can('impersonateUsers')) {
-                return $user;
-            }
-        }
-
-        return null;
+        return $user;
     }
 
     /**
@@ -636,6 +699,12 @@ class User extends Element implements IdentityInterface
      * @var string|null Password
      */
     public ?string $password = null;
+
+    /**
+     * @var int|null Affiliated site ID
+     * @since 5.6.0
+     */
+    public ?int $affiliatedSiteId = null;
 
     /**
      * @var DateTime|null Last login date
@@ -774,6 +843,10 @@ class User extends Element implements IdentityInterface
 
         if (empty($this->username) && Craft::$app->getConfig()->getGeneral()->useEmailAsUsername) {
             $this->username = $this->email;
+        }
+
+        if ($this->password === '') {
+            $this->password = null;
         }
 
         $this->normalizeNames();
@@ -918,7 +991,7 @@ class User extends Element implements IdentityInterface
         ]);
 
         $rules[] = [['lastLoginDate', 'lastInvalidLoginDate', 'lockoutDate', 'lastPasswordChangeDate', 'verificationCodeIssuedDate'], DateTimeValidator::class];
-        $rules[] = [['invalidLoginCount', 'photoId'], 'number', 'integerOnly' => true];
+        $rules[] = [['invalidLoginCount', 'photoId', 'affiliatedSiteId'], 'number', 'integerOnly' => true];
         $rules[] = [['username', 'email', 'unverifiedEmail', 'fullName', 'firstName', 'lastName'], 'trim', 'skipOnEmpty' => true];
         $rules[] = [['email', 'unverifiedEmail'], 'email', 'enableIDN' => App::supportsIdn(), 'enableLocalIDN' => false];
         $rules[] = [['email', 'username', 'fullName', 'firstName', 'lastName', 'password', 'unverifiedEmail'], 'string', 'max' => 255];
@@ -974,7 +1047,7 @@ class User extends Element implements IdentityInterface
         ];
 
         $rules[] = [
-            ['fullName', 'firstName', 'lastName'], function($attribute, $params, Validator $validator) {
+            ['fullName', 'firstName', 'lastName', 'username'], function($attribute, $params, Validator $validator) {
                 if (str_contains($this->$attribute, '://')) {
                     $validator->addError($this, $attribute, Craft::t('app', 'Invalid value “{value}”.'));
                 }
@@ -1050,6 +1123,25 @@ class User extends Element implements IdentityInterface
     public function getIsCredentialed(): bool
     {
         return $this->active || $this->pending;
+    }
+
+    /**
+     * Returns whether the user has a password.
+     *
+     * @return bool
+     * @since 5.6.0
+     */
+    public function getHasPassword(): bool
+    {
+        if (isset($this->password)) {
+            return true;
+        }
+
+        return (bool)(new Query())
+            ->select('password')
+            ->from(Table::USERS)
+            ->where(['id' => $this->id])
+            ->scalar();
     }
 
     /**
@@ -1149,6 +1241,15 @@ class User extends Element implements IdentityInterface
         }
 
         return $this->_addressManager;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function afterRestore(): void
+    {
+        $this->getAddressManager()->restoreNestedElements($this);
+        parent::afterRestore();
     }
 
     private function createAddressQuery(): AddressQuery
@@ -1472,6 +1573,21 @@ class User extends Element implements IdentityInterface
     }
 
     /**
+     * Returns the user’s affiliated site, if they have one.
+     *
+     * @return Site|null
+     * @since 5.6.0
+     */
+    public function getAffiliatedSite(): ?Site
+    {
+        if ($this->affiliatedSiteId === null || !Craft::$app->getIsMultiSite()) {
+            return null;
+        }
+
+        return Craft::$app->getSites()->getSiteById($this->affiliatedSiteId, true);
+    }
+
+    /**
      * @inheritdoc
      */
     public function getStatus(): ?string
@@ -1591,7 +1707,7 @@ XML;
 
         return (
             $user->id === $this->id ||
-            $user->can('editUsers')
+            $user->can('viewUsers')
         );
     }
 
@@ -1788,6 +1904,7 @@ XML;
         $currentUser = Craft::$app->getUser()->getIdentity();
         $view = Craft::$app->getView();
         $usersService = Craft::$app->getUsers();
+        $userSession = Craft::$app->getUser();
 
         $canAdministrateUsers = $currentUser->can('administrateUsers');
         $canModerateUsers = $currentUser->can('moderateUsers');
@@ -1863,8 +1980,8 @@ XML;
                             ($currentUser->admin || !$this->admin) &&
                             $canModerateUsers &&
                             (
-                                ($previousUserId = Session::get(self::IMPERSONATE_KEY)) === null ||
-                                $this->id != $previousUserId
+                                ($impersonatorId = $userSession->getImpersonatorId()) === null ||
+                                $this->id !== $impersonatorId
                             )
                         ) {
                             $statusItems[] = [
@@ -1877,7 +1994,7 @@ XML;
                         }
                     }
 
-                    if (!$isCurrentUser) {
+                    if (!$isCurrentUser && $userSession->checkPermission('editUsers')) {
                         $statusItems[] = [
                             'icon' => 'paperplane',
                             'label' => Craft::t('app', 'Send password reset email'),
@@ -1931,6 +2048,7 @@ XML;
                         'params' => [
                             'userId' => $this->id,
                         ],
+                        'requireElevatedSession' => true,
                     ];
 
                     $copyImpersonationUrlId = sprintf('action-copy-impersonation-url-%s', mt_rand());
@@ -1942,13 +2060,15 @@ XML;
 
                     $view->registerJsWithVars(fn($id, $userId, $message) => <<<JS
 $('#' + $id).on('activate', () => {
-  Craft.sendActionRequest('POST', 'users/get-impersonation-url', {
-    data: {userId: $userId},
-  }).then((response) => {
-    Craft.ui.createCopyTextPrompt({
-      label: $message,
-      value: response.data.url,
-    });
+  Craft.elevatedSessionManager.requireElevatedSession(() => {
+      Craft.sendActionRequest('POST', 'users/get-impersonation-url', {
+        data: {userId: $userId},
+      }).then((response) => {
+        Craft.ui.createCopyTextPrompt({
+          label: $message,
+          value: response.data.url,
+        });
+      });
   });
 });
 JS, [
@@ -2026,9 +2146,9 @@ JS, [
                     $items[] = [
                         'id' => $deleteId,
                         'icon' => 'trash',
-                        'label' => Craft::t('app', 'Delete {type}', [
+                        'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Delete {type}', [
                             'type' => static::lowerDisplayName(),
-                        ]),
+                        ])),
                     ];
 
                     $view->registerJsWithVars(fn($id, $userId, $redirect) => <<<JS
@@ -2055,6 +2175,12 @@ JS,
 
         return $items;
     }
+
+//    public function prepareEditScreen(Response $response, string $containerId): void
+//    {
+//        $cpScreen = $response->getBehavior('cp-screen');
+//        $t = 1;
+//    }
 
     private function _copyPasswordResetUrlActionItem(string $label, View $view): array
     {
@@ -2196,7 +2322,7 @@ JS, [
     }
 
     /**
-     * Sets the entry’s author.
+     * Sets the user’s photo.
      *
      * @param Asset|null $photo
      */
@@ -2219,9 +2345,7 @@ JS, [
                 return $this->email ? Html::mailto(Html::encode($this->email)) : '';
 
             case 'groups':
-                return implode(', ', array_map(function(UserGroup $group) {
-                    return Html::encode(Craft::t('site', $group->name));
-                }, $this->getGroups()));
+                return implode(', ', array_map(fn(UserGroup $group) => Html::encode(Craft::t('site', $group->name)), $this->getGroups()));
 
             case 'preferredLanguage':
                 $language = $this->getPreferredLanguage();
@@ -2230,6 +2354,40 @@ JS, [
             case 'preferredLocale':
                 $locale = $this->getPreferredLocale();
                 return $locale ? Craft::$app->getI18n()->getLocaleById($locale)->getDisplayName(Craft::$app->language) : '';
+
+            case 'is2faEnabled':
+                $enabled = Craft::$app->getAuth()->hasActiveMethod($this);
+                if ($this->viewMode === 'cards') {
+                    return Cp::statusLabelHtml([
+                        'color' => $enabled ? Color::Teal : Color::Gray,
+                        'label' => Craft::t('app', 'Two-Step Verification'),
+                        'icon' => $enabled ? 'check' : 'xmark',
+                    ]);
+                } else {
+                    if (!$enabled) {
+                        return '';
+                    }
+
+                    return Html::tag('span', '', [
+                        'class' => 'checkbox-icon',
+                        'role' => 'img',
+                        'title' => Craft::t('app', 'Enabled'),
+                        'aria' => [
+                            'label' => Craft::t('app', 'Enabled'),
+                        ],
+                    ]);
+                }
+                
+                // no break
+            case 'isCredentialed':
+                $value = $this->getIsCredentialed();
+                if ($this->viewMode === 'cards') {
+                    return Cp::statusLabelHtml([
+                        'color' => $value ? Color::Teal : Color::Gray,
+                        'label' => Craft::t('app', 'Credentialed'),
+                        'icon' => $value ? 'check' : 'xmark',
+                    ]);
+                }
         }
 
         return parent::attributeHtml($attribute);
@@ -2371,7 +2529,7 @@ JS, [
             }
         } else {
             $record = new UserRecord();
-            $record->id = (int)$this->id;
+            $record->id = $this->id;
             $record->active = $this->active;
             $record->pending = $this->pending;
             $record->locked = $this->locked;
@@ -2380,7 +2538,8 @@ JS, [
 
         $this->prepareNamesForSave();
 
-        $record->photoId = (int)$this->photoId ?: null;
+        $record->photoId = $this->photoId;
+        $record->affiliatedSiteId = $this->affiliatedSiteId;
         $record->admin = $this->admin;
         $record->username = $this->username;
         $record->fullName = $this->fullName;

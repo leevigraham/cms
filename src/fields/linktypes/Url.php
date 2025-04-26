@@ -9,6 +9,7 @@ namespace craft\fields\linktypes;
 
 use Craft;
 use craft\helpers\Cp;
+use League\Uri\Uri;
 
 /**
  * URL link type.
@@ -45,6 +46,12 @@ class Url extends BaseTextLinkType
      */
     public bool $allowAnchors = false;
 
+    /**
+     * @return bool Whether custom URL schemes should be allowed.
+     * @since 5.7.0
+     */
+    public bool $allowCustomSchemes = false;
+
     protected function urlPrefix(): array
     {
         return ['https://', 'http://'];
@@ -62,6 +69,11 @@ class Url extends BaseTextLinkType
                 'label' => Craft::t('app', 'Allow anchors'),
                 'name' => 'allowAnchors',
                 'on' => $this->allowAnchors,
+            ]) .
+            Cp::lightswitchFieldHtml([
+                'label' => Craft::t('app', 'Allow custom URL schemes'),
+                'name' => 'allowCustomSchemes',
+                'on' => $this->allowCustomSchemes,
             ]);
     }
 
@@ -71,6 +83,17 @@ class Url extends BaseTextLinkType
             'type' => 'url',
             'inputmode' => 'url',
         ];
+    }
+
+    public function validateValue(string $value, ?string &$error = null): bool
+    {
+        try {
+            // Leveraging Uri package to convert domains to punycode
+            $value = Uri::new($value);
+            return parent::validateValue($value, $error);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     protected function pattern(): string
@@ -84,6 +107,10 @@ class Url extends BaseTextLinkType
 
         if ($this->allowAnchors) {
             $pattern .= '|#';
+        }
+
+        if ($this->allowCustomSchemes) {
+            $pattern .= '|(?!https?:)\w+:.+';
         }
 
         return "^($pattern)";

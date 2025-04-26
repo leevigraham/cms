@@ -39,6 +39,7 @@ use craft\fieldlayoutelements\assets\AssetTitleField;
 use craft\fieldlayoutelements\entries\EntryTitleField;
 use craft\fieldlayoutelements\FullNameField;
 use craft\fieldlayoutelements\TitleField;
+use craft\fieldlayoutelements\users\AffiliatedSiteField;
 use craft\fieldlayoutelements\users\EmailField;
 use craft\fieldlayoutelements\users\FullNameField as UserFullNameField;
 use craft\fieldlayoutelements\users\PhotoField;
@@ -619,7 +620,7 @@ trait ApplicationTrait
      */
     public function getLicensedEdition(): ?CmsEdition
     {
-        $licenseInfo = $this->getCache()->get('licenseInfo') ?: [];
+        $licenseInfo = $this->getCache()->get(App::licenseInfoCacheKey()) ?: [];
 
         if (!isset($licenseInfo['craft']['edition'])) {
             return null;
@@ -1573,25 +1574,20 @@ trait ApplicationTrait
             return $this->first(...func_get_args());
         });
 
-        // Load the request before anything else, so everything else can safely check Craft::$app->has('request', true)
-        // to avoid possible recursive fatal errors in the request initialization
-        $request = $this->getRequest();
-        $this->getLog();
-
         // Set the Craft edition
         $edition = App::env('CRAFT_EDITION') ?? $this->getProjectConfig()->get('system.edition');
         $this->edition = $edition ? CmsEdition::fromHandle($edition) : CmsEdition::Solo;
+
+        // Load the request before anything else, so everything else can safely check Craft::$app->has('request', true)
+        // to avoid possible recursive fatal errors in the request initialization
+        $this->getRequest();
+        $this->getLog();
 
         // Set the timezone
         $this->_setTimeZone();
 
         // Set the language
         $this->updateTargetLanguage();
-
-        // Prevent browser caching if this is a control panel request
-        if ($this instanceof WebApplication && $request->getIsCpRequest()) {
-            $this->getResponse()->setNoCacheHeaders();
-        }
 
         // Register the variable dumper
         VarDumper::setHandler(function($var) {
@@ -1728,6 +1724,9 @@ trait ApplicationTrait
                     $event->fields[] = UserFullNameField::class;
                     $event->fields[] = PhotoField::class;
                     $event->fields[] = EmailField::class;
+                    if (Craft::$app->getIsMultiSite()) {
+                        $event->fields[] = AffiliatedSiteField::class;
+                    }
                     break;
             }
         });

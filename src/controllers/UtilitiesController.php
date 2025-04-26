@@ -10,6 +10,7 @@ namespace craft\controllers;
 use Craft;
 use craft\base\UtilityInterface;
 use craft\errors\MigrationException;
+use craft\filters\UtilityAccess;
 use craft\helpers\Cp;
 use craft\helpers\FileHelper;
 use craft\helpers\Queue;
@@ -33,6 +34,40 @@ use yii\web\Response;
 
 class UtilitiesController extends Controller
 {
+    /**
+     * @inheritdoc
+     */
+    public function behaviors(): array
+    {
+        return array_merge(parent::behaviors(), [
+            [
+                'class' => UtilityAccess::class,
+                'utility' => DeprecationErrors::class,
+                'only' => ['get-deprecation-error-traces-modal', 'delete-all-deprecation-errors', 'delete-deprecation-error'],
+            ],
+            [
+                'class' => UtilityAccess::class,
+                'utility' => ClearCaches::class,
+                'only' => ['clear-caches-perform-action', 'invalidate-tags'],
+            ],
+            [
+                'class' => UtilityAccess::class,
+                'utility' => DbBackup::class,
+                'only' => ['db-backup-perform-action'],
+            ],
+            [
+                'class' => UtilityAccess::class,
+                'utility' => FindAndReplaceUtility::class,
+                'only' => ['find-and-replace-perform-action'],
+            ],
+            [
+                'class' => UtilityAccess::class,
+                'utility' => Migrations::class,
+                'only' => ['apply-new-migrations'],
+            ],
+        ]);
+    }
+
     /**
      * Index
      *
@@ -74,13 +109,12 @@ class UtilitiesController extends Controller
     public function actionShowUtility(string $id): Response
     {
         $utilitiesService = Craft::$app->getUtilities();
+        $class = $utilitiesService->getUtilityTypeById($id);
 
-        if (($class = $utilitiesService->getUtilityTypeById($id)) === null) {
+        if ($class === null) {
             return $this->run('index');
         }
 
-        /** @var string|UtilityInterface $class */
-        /** @phpstan-var class-string<UtilityInterface>|UtilityInterface $class */
         if ($utilitiesService->checkAuthorization($class) === false) {
             throw new ForbiddenHttpException('User not permitted to access the "' . $class::displayName() . '".');
         }
@@ -108,10 +142,6 @@ class UtilitiesController extends Controller
         $this->requirePostRequest();
         $this->requireAcceptsJson();
 
-        if (!Craft::$app->getUtilities()->checkAuthorization(DeprecationErrors::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $logId = Craft::$app->request->getRequiredParam('logId');
         $html = $this->getView()->renderTemplate('_components/utilities/DeprecationErrors/traces_modal.twig', [
             'log' => Craft::$app->deprecator->getLogById($logId),
@@ -133,10 +163,6 @@ class UtilitiesController extends Controller
         $this->requirePostRequest();
         $this->requireAcceptsJson();
 
-        if (!Craft::$app->getUtilities()->checkAuthorization(DeprecationErrors::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         Craft::$app->deprecator->deleteAllLogs();
 
         return $this->asSuccess();
@@ -153,10 +179,6 @@ class UtilitiesController extends Controller
         $this->requirePostRequest();
         $this->requireAcceptsJson();
 
-        if (!Craft::$app->getUtilities()->checkAuthorization(DeprecationErrors::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $logId = $this->request->getRequiredBodyParam('logId');
         Craft::$app->deprecator->deleteLogById($logId);
 
@@ -172,10 +194,6 @@ class UtilitiesController extends Controller
      */
     public function actionClearCachesPerformAction(): Response
     {
-        if (!Craft::$app->getUtilities()->checkAuthorization(ClearCaches::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $caches = $this->request->getRequiredBodyParam('caches');
 
         foreach (ClearCaches::cacheOptions() as $cacheOption) {
@@ -213,10 +231,6 @@ class UtilitiesController extends Controller
      */
     public function actionInvalidateTags(): Response
     {
-        if (!Craft::$app->getUtilities()->checkAuthorization(ClearCaches::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $tags = $this->request->getRequiredBodyParam('tags');
         $cache = Craft::$app->getCache();
 
@@ -236,10 +250,6 @@ class UtilitiesController extends Controller
      */
     public function actionDbBackupPerformAction(): ?Response
     {
-        if (!Craft::$app->getUtilities()->checkAuthorization(DbBackup::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         try {
             $backupPath = Craft::$app->getDb()->backup();
         } catch (Throwable $e) {
@@ -271,10 +281,6 @@ class UtilitiesController extends Controller
      */
     public function actionFindAndReplacePerformAction(): Response
     {
-        if (!Craft::$app->getUtilities()->checkAuthorization(FindAndReplaceUtility::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $params = $this->request->getRequiredBodyParam('params');
 
         if (!empty($params['find']) && !empty($params['replace'])) {
@@ -295,10 +301,6 @@ class UtilitiesController extends Controller
      */
     public function actionApplyNewMigrations(): Response
     {
-        if (!Craft::$app->getUtilities()->checkAuthorization(Migrations::class)) {
-            throw new ForbiddenHttpException('User is not authorized to perform this action.');
-        }
-
         $migrator = Craft::$app->getContentMigrator();
 
         try {
@@ -321,8 +323,7 @@ class UtilitiesController extends Controller
         $info = [];
 
         foreach (Craft::$app->getUtilities()->getAuthorizedUtilityTypes() as $class) {
-            /** @var string|UtilityInterface $class */
-            /** @phpstan-var class-string<UtilityInterface>|UtilityInterface $class */
+            /** @var class-string<UtilityInterface> $class */
             $info[] = [
                 'id' => $class::id(),
                 'iconSvg' => $this->_getUtilityIconSvg($class),
@@ -338,13 +339,11 @@ class UtilitiesController extends Controller
     /**
      * Returns a utility type’s SVG icon.
      *
-     * @param string $class
-     * @phpstan-param class-string<UtilityInterface> $class
+     * @param class-string<UtilityInterface> $class
      * @return string
      */
     private function _getUtilityIconSvg(string $class): string
     {
-        /** @var UtilityInterface|string $class */
         $icon = $class::icon();
 
         if ($icon === null) {
@@ -365,14 +364,11 @@ class UtilitiesController extends Controller
     /**
      * Returns the default icon SVG for a given utility type.
      *
-     * @param string $class
-     * @phpstan-param class-string<UtilityInterface> $class
+     * @param class-string<UtilityInterface> $class
      * @return string
      */
     private function _getDefaultUtilityIconSvg(string $class): string
     {
-        /** @var string|UtilityInterface $class */
-        /** @phpstan-var class-string<UtilityInterface>|UtilityInterface $class */
         return $this->getView()->renderTemplate('_includes/fallback-icon.svg.twig', [
             'label' => $class::displayName(),
         ]);

@@ -78,6 +78,7 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
 
     if (
       this.elementIndex.isAdministrative &&
+      !this.elementIndex.settings.static &&
       this.elementIndex.settings.inlineEditable !== false &&
       this.$elementContainer.has('> tr[data-id] > th .element[data-editable]')
     ) {
@@ -87,7 +88,10 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
     // Set up the broadcast listener
     if (Craft.messageReceiver) {
       this._broadcastListener = (ev) => {
-        if (ev.data.event === 'saveElement') {
+        if (
+          ev.data.event === 'saveElement' ||
+          ev.data.event === 'replaceFile'
+        ) {
           const $rows = this.$table.find(
             `> tbody > tr[data-id="${ev.data.id}"]`
           );
@@ -202,10 +206,7 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
       });
 
       this.addListener(this.$elementContainer, 'keydown', (event) => {
-        if (
-          event.keyCode === Garnish.RETURN_KEY &&
-          Garnish.isCtrlKeyPressed(event)
-        ) {
+        if (event.keyCode === Garnish.RETURN_KEY) {
           this.$saveBtn.trigger('click');
         } else if (
           event.keyCode === Garnish.S_KEY &&
@@ -302,7 +303,7 @@ Craft.TableElementIndexView = Craft.BaseElementIndexView.extend({
   },
 
   initTableHeaders: function () {
-    if (this.settings.sortable || this.elementIndex.inlineEditing) {
+    if (this.elementIndex.inlineEditing) {
       return;
     }
 

@@ -17,6 +17,7 @@ use craft\helpers\Session as SessionHelper;
 use craft\helpers\StringHelper;
 use craft\models\Site;
 use craft\services\Sites;
+use yii\base\InvalidArgumentException;
 use yii\base\InvalidConfigException;
 use yii\db\Exception as DbException;
 use yii\di\Instance;
@@ -263,7 +264,7 @@ class Request extends \yii\web\Request
                     }
                     $testBaseCpUrls[] = $this->getBaseUrl() . "/{$this->generalConfig->cpTrigger}";
                 }
-                $siteScore = $siteScore ?? (isset($site) ? $this->_scoreSite($site) : 0);
+                $siteScore ??= isset($site) ? $this->_scoreSite($site) : 0;
                 foreach ($testBaseCpUrls as $testUrl) {
                     $cpScore = $this->_scoreUrl($testUrl);
                     if ($cpScore > $siteScore) {
@@ -429,11 +430,7 @@ class Request extends \yii\web\Request
      */
     public function getSegments(): array
     {
-        if (isset($this->_segments)) {
-            return $this->_segments;
-        }
-
-        return $this->_segments = $this->_segments($this->_path);
+        return $this->_segments ?? ($this->_segments = $this->_segments($this->_path));
     }
 
     /**
@@ -1542,6 +1539,20 @@ class Request extends \yii\web\Request
             return $site;
         }
 
+        // Is CRAFT_SITE or X-Craft-Site present?
+        $siteId = App::env('CRAFT_SITE') ?? $this->getHeaders()->get('X-Craft-Site');
+        if ($siteId !== null) {
+            if (is_numeric($siteId)) {
+                $site = $this->sites->getSiteById($siteId, false);
+            } else {
+                $site = $this->sites->getSiteByHandle($siteId, false);
+            }
+            if (!$site && Craft::$app->getIsInstalled() && !Craft::$app->getUpdates()->getIsCraftUpdatePending()) {
+                throw new InvalidArgumentException("Invalid site: $siteId");
+            }
+            return $site;
+        }
+
         $sites = $this->sites->getAllSites(false);
 
         if (empty($sites)) {
@@ -1741,10 +1752,7 @@ class Request extends \yii\web\Request
         }
 
         // Special path?
-        if (
-            $checkSpecialPaths &&
-            ($this->_isCpRequest || !$this->generalConfig->headlessMode)
-        ) {
+        if ($checkSpecialPaths) {
             $specialPaths = [
                 [
                     $this->_isCpRequest ? self::CP_PATH_LOGIN : $this->generalConfig->getLoginPath(),

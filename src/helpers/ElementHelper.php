@@ -13,6 +13,7 @@ use craft\base\ElementActionInterface;
 use craft\base\ElementInterface;
 use craft\base\Field;
 use craft\base\NestedElementInterface;
+use craft\config\GeneralConfig;
 use craft\db\Query;
 use craft\db\Table;
 use craft\errors\OperationAbortedException;
@@ -22,7 +23,6 @@ use craft\services\ElementSources;
 use craft\web\View;
 use DateTime;
 use Throwable;
-use Twig\Error\LoaderError as TwigLoaderError;
 use Twig\Markup;
 use yii\base\Exception;
 use yii\base\InvalidConfigException;
@@ -107,7 +107,7 @@ class ElementHelper
         $slug = StringHelper::stripHtml($slug);
 
         // Remove inner-word punctuation
-        $slug = preg_replace('/[\'"‘’“”\[\]\(\)\{\}:]/u', '', $slug);
+        $slug = preg_replace('/[\'"‘’“”ʻ\[\]\(\)\{\}:]/u', '', $slug);
 
         // Make it lowercase
         $generalConfig = Craft::$app->getConfig()->getGeneral();
@@ -664,8 +664,7 @@ class ElementHelper
     /**
      * Returns an element type's source definition based on a given source key/path and context.
      *
-     * @param string $elementType The element type class
-     * @phpstan-param class-string<ElementInterface> $elementType
+     * @param class-string<ElementInterface> $elementType The element type class
      * @param string $sourceKey The source key/path
      * @param string $context The context
      * @return array|null The source definition, or null if it cannot be found
@@ -711,7 +710,6 @@ class ElementHelper
 
         if (!str_starts_with($sourceKey, 'custom:')) {
             // Let the element get involved
-            /** @var string|ElementInterface $elementType */
             $source = $elementType::findSource($sourceKey, $context);
             if ($source) {
                 $source['type'] = ElementSources::TYPE_NATIVE;
@@ -825,6 +823,10 @@ class ElementHelper
             ]);
         }
 
+        if ($value instanceof Markup) {
+            return (string)$value;
+        }
+
         try {
             $value = (string)$value;
         } catch (Throwable) {
@@ -832,6 +834,47 @@ class ElementHelper
         }
 
         return Html::encode(StringHelper::stripHtml($value));
+    }
+
+    /**
+     * Returns the HTML for a link attribute based on provided URL.
+     *
+     * @param string|null $url
+     * @return string
+     * @since 5.5.0
+     */
+    public static function linkAttributeHtml(?string $url): string
+    {
+        return Html::beginTag('a',  [
+            'href' => $url,
+            'rel' => 'noopener',
+            'target' => '_blank',
+            'title' => Craft::t('app', 'Visit webpage'),
+            'aria-label' => Craft::t('app', 'View'),
+        ]) .
+        Html::tag('span', Cp::iconSvg('world'), [
+            'class' => ['cp-icon', 'small', 'inline-flex'],
+        ]) .
+        Html::endTag('a');
+    }
+
+    /**
+     * Returns the HTML for URI attribute based on a value (text) and a URL it's supposed to link to.
+     *
+     * @param string|null $value
+     * @param string|null $url
+     * @return string
+     * @since 5.5.0
+     */
+    public static function uriAttributeHtml(?string $value, ?string $url): string
+    {
+        return Html::a(Html::tag('span', $value, ['dir' => 'ltr']), $url, [
+            'href' => $url,
+            'rel' => 'noopener',
+            'target' => '_blank',
+            'class' => 'go',
+            'title' => Craft::t('app', 'Visit webpage'),
+        ]);
     }
 
     /**
@@ -955,31 +998,35 @@ class ElementHelper
     {
         $view = Craft::$app->getView();
         $generalConfig = Craft::$app->getConfig()->getGeneral();
-        $output = [];
+        $output = array_map(fn(ElementInterface $element) => self::renderElement($element, $variables, $view, $generalConfig), $elements);
+        return new Markup(implode("\n", $output), Craft::$app->charset);
+    }
 
-        foreach ($elements as $element) {
-            $refHandle = $element::refHandle();
-            if ($refHandle === null) {
-                throw new NotSupportedException(sprintf('Element type “%s” doesn’t define a reference handle, so it doesn’t support partial templates.', $element::displayName()));
-            }
-            $providerHandle = $element->getFieldLayout()?->provider?->getHandle();
-            if ($providerHandle === null) {
-                throw new InvalidConfigException(sprintf('Element “%s” doesn’t have a field layout provider that defines a handle, so it can’t be rendered with a partial template.', $element));
-            }
-            $template = sprintf('%s/%s/%s', $generalConfig->partialTemplatesPath, $refHandle, $providerHandle);
-            $variables[$refHandle] = $element;
-            try {
-                $output[] = $view->renderTemplate($template, $variables, View::TEMPLATE_MODE_SITE);
-            } catch (TwigLoaderError $error) {
-                if ($error->getSourceContext() !== null) {
-                    throw $error;
-                }
-                // fallback to the string representation of the element
-                $output[] = Html::tag('p', Html::encode((string)$element));
+    private static function renderElement(ElementInterface $element, array $variables, View $view, GeneralConfig $generalConfig): string
+    {
+        $refHandle = $element::refHandle();
+        if ($refHandle === null) {
+            throw new NotSupportedException(sprintf('Element type “%s” doesn’t define a reference handle, so it doesn’t support partial templates.', $element::displayName()));
+        }
+
+        $variables[$refHandle] = $element;
+        $templates = [
+            sprintf('%s/%s', $generalConfig->partialTemplatesPath, $refHandle),
+        ];
+
+        $providerHandle = $element->getFieldLayout()?->provider?->getHandle();
+        if ($providerHandle !== null) {
+            array_unshift($templates, sprintf('%s/%s/%s', $generalConfig->partialTemplatesPath, $refHandle, $providerHandle));
+        }
+
+        foreach ($templates as $template) {
+            if ($view->doesTemplateExist($template, View::TEMPLATE_MODE_SITE)) {
+                return $view->renderTemplate($template, $variables, View::TEMPLATE_MODE_SITE);
             }
         }
 
-        return new Markup(implode("\n", $output), Craft::$app->charset);
+        // fallback to the string representation of the element
+        return Html::tag('p', Html::encode((string)$element));
     }
 
     /**
@@ -995,17 +1042,18 @@ class ElementHelper
             return;
         }
 
-        $canonicalElements = array_filter($elements, fn(ElementInterface $element) => $element->getIsCanonical());
+        // filter out drafts and revisions
+        // (don't just exclude derivative elements though! see https://github.com/craftcms/cms/issues/16626)
+        $canonicalElements = array_filter(
+            $elements,
+            fn(ElementInterface $element) => !$element->getIsDraft() && !$element->getIsRevision(),
+        );
 
         if (empty($canonicalElements)) {
             return;
         }
 
         $first = reset($canonicalElements);
-
-        if (!$first::hasDrafts()) {
-            return;
-        }
 
         $drafts = $first::find()
             ->draftOf($canonicalElements)

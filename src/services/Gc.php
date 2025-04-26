@@ -15,6 +15,7 @@ use craft\console\Application as ConsoleApplication;
 use craft\db\Connection;
 use craft\db\Query;
 use craft\db\Table;
+use craft\db\TableSchema;
 use craft\elements\Address;
 use craft\elements\Asset;
 use craft\elements\Category;
@@ -34,12 +35,13 @@ use ReflectionMethod;
 use yii\base\Component;
 use yii\base\Exception;
 use yii\base\InvalidConfigException;
+use yii\db\Exception as DbException;
 use yii\di\Instance;
 
 /**
  * Garbage Collection service.
  *
- * An instance of the service is available via [[\craft\base\ApplicationTrait::getGc()|`Craft::$app->gc`]].
+ * An instance of the service is available via [[\craft\base\ApplicationTrait::getGc()|`Craft::$app->getGc()`]].
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 3.1.0
@@ -110,7 +112,7 @@ class Gc extends Component
         $this->_deleteStaleSessions();
         $this->_deleteStaleAnnouncements();
         $this->_deleteStaleElementActivity();
-        $this->_deleteStaleBulkElementOps();
+        $this->_deleteStaleBulkOpData();
 
         // elements should always go first
         $this->hardDeleteElements();
@@ -131,6 +133,12 @@ class Gc extends Component
         $this->deletePartialElements(Tag::class, Table::TAGS, 'id');
         $this->deletePartialElements(User::class, Table::USERS, 'id');
 
+        $this->deleteOrphanedFieldLayouts(Asset::class, Table::VOLUMES);
+        $this->deleteOrphanedFieldLayouts(Category::class, Table::CATEGORYGROUPS);
+        $this->deleteOrphanedFieldLayouts(Entry::class, Table::ENTRYTYPES);
+        $this->deleteOrphanedFieldLayouts(GlobalSet::class, Table::GLOBALSETS);
+        $this->deleteOrphanedFieldLayouts(Tag::class, Table::TAGGROUPS);
+
         $this->_deleteUnsupportedSiteEntries();
         $this->deleteOrphanedNestedElements(Address::class, Table::ADDRESSES);
         $this->deleteOrphanedNestedElements(Entry::class, Table::ENTRIES);
@@ -146,6 +154,8 @@ class Gc extends Component
         $this->_deleteOrphanedSearchIndexes();
         $this->_deleteOrphanedRelations();
         $this->_deleteOrphanedStructureElements();
+        $this->_deleteOrphanedFkRows();
+        $this->_deletePointlessChangeData();
 
         $this->_hardDeleteStructures();
 
@@ -182,9 +192,7 @@ class Gc extends Component
         }
 
         $folders = (new Query())->select(['id', 'path'])->from([Table::VOLUMEFOLDERS])->where(['volumeId' => $volumeIds])->all();
-        usort($folders, function($a, $b) {
-            return substr_count($a['path'], '/') < substr_count($b['path'], '/');
-        });
+        usort($folders, fn($a, $b) => substr_count($a['path'], '/') < substr_count($b['path'], '/'));
 
         foreach ($folders as $folder) {
             VolumeFolder::deleteAll(['id' => $folder['id']]);
@@ -298,15 +306,13 @@ class Gc extends Component
     /**
      * Deletes elements that are missing data in the given element extension table.
      *
-     * @param string $elementType The element type
-     * @phpstan-param class-string<ElementInterface> $elementType
+     * @param class-string<ElementInterface> $elementType The element type
      * @param string $table The extension table name
      * @param string $fk The column name that contains the foreign key to `elements.id`
      * @since 3.6.6
      */
     public function deletePartialElements(string $elementType, string $table, string $fk): void
     {
-        /** @var string|ElementInterface $elementType */
         $this->_stdout(sprintf('    > deleting partial %s data ... ', $elementType::lowerDisplayName()));
 
         $ids = (new Query())
@@ -360,8 +366,8 @@ class Gc extends Component
     {
         $this->_stdout('    > removing empty temp folders ... ');
 
-        $emptyFolders = (new Query())
-            ->select(['folders.id', 'folders.path'])
+        $emptyFolderIds = (new Query())
+            ->select(['folders.id'])
             ->from(['folders' => Table::VOLUMEFOLDERS])
             ->leftJoin(['assets' => Table::ASSETS], '[[assets.folderId]] = [[folders.id]]')
             ->where([
@@ -370,17 +376,12 @@ class Gc extends Component
             ])
             ->andWhere(['not', ['folders.parentId' => null]])
             ->andWhere(['not', ['folders.path' => null]])
-            ->pairs();
+            ->column();
 
-        $fs = Craft::createObject(Temp::class);
-
-        foreach ($emptyFolders as $emptyFolderPath) {
-            if ($fs->directoryExists($emptyFolderPath)) {
-                $fs->deleteDirectory($emptyFolderPath);
-            }
+        if (!empty($emptyFolderIds)) {
+            Craft::$app->getAssets()->deleteFoldersByIds($emptyFolderIds);
         }
 
-        VolumeFolder::deleteAll(['id' => array_keys($emptyFolders)]);
         $this->_stdout("done\n", Console::FG_GREEN);
     }
 
@@ -432,12 +433,15 @@ class Gc extends Component
     }
 
     /**
-     * Deletes any stale bulk element operation records.
+     * Deletes any stale bulk operation data.
      */
-    private function _deleteStaleBulkElementOps(): void
+    private function _deleteStaleBulkOpData(): void
     {
-        $this->_stdout('    > deleting stale bulk element operation records ... ');
-        Db::delete(Table::ELEMENTS_BULKOPS, ['<', 'timestamp', Db::prepareDateForDb(new DateTime('2 weeks ago'))]);
+        $this->_stdout('    > deleting stale bulk operation data ... ');
+        $condition = ['<', 'timestamp', Db::prepareDateForDb(new DateTime('2 weeks ago'))];
+        foreach ([Table::BULKOPEVENTS, Table::ELEMENTS_BULKOPS] as $table) {
+            Db::delete($table, $condition);
+        }
         $this->_stdout("done\n", Console::FG_GREEN);
     }
 
@@ -486,15 +490,13 @@ class Gc extends Component
      * Deletes elements which have a `fieldId` value, but it’s set to an invalid field ID,
      * or they're missing a row in the `elements_owners` table.
      *
-     * @param string $elementType The element type
-     * @phpstan-param class-string<ElementInterface> $elementType
+     * @param class-string<ElementInterface> $elementType The element type
      * @param string $table The extension table name
      * @param string $fieldFk The column name that contains the foreign key to `fields.id`
      * @since 5.4.2
      */
     public function deleteOrphanedNestedElements(string $elementType, string $table, string $fieldFk = 'fieldId'): void
     {
-        /** @var string|ElementInterface $elementType */
         $this->_stdout(sprintf('    > deleting orphaned nested %s ... ', $elementType::pluralLowerDisplayName()));
 
         $ids1 = (new Query())
@@ -595,6 +597,124 @@ class Gc extends Component
 
         if (!empty($ids)) {
             Db::delete(Table::STRUCTUREELEMENTS, ['id' => $ids]);
+        }
+
+        $this->_stdout("done\n", Console::FG_GREEN);
+    }
+
+    private function _deleteOrphanedFkRows(): void
+    {
+        $this->_stdout('    > deleting orphaned foreign key rows ... ');
+
+        // Disable FK checks
+        try {
+            $this->db->transaction(function() {
+                $this->db->createCommand()->checkIntegrity(false)->execute();
+            });
+            $disabledFkChecks = true;
+        } catch (DbException) {
+            // the DB user probably didn't have permission
+            // see https://github.com/craftcms/cms/issues/15063#issuecomment-2194059768
+            $disabledFkChecks = false;
+        }
+
+        $isMysql = $this->db->getIsMysql();
+        foreach ($this->db->getSchema()->getTableSchemas() as $table) {
+            /** @var TableSchema $table */
+            $extendedFkInfo = $table->getExtendedForeignKeys();
+            $counter = 0;
+            foreach ($table->foreignKeys as $fk) {
+                if ($extendedFkInfo[$counter]['deleteType'] === 'CASCADE') {
+                    $fk = array_merge($fk);
+                    $refTable = array_shift($fk);
+
+                    foreach ($fk as $fkColumn => $pkColumn) {
+                        if ($isMysql) {
+                            $sql = <<<SQL
+DELETE t.* FROM $table->name t
+LEFT JOIN $refTable t2 ON t2.$pkColumn = t.$fkColumn
+WHERE t.$fkColumn IS NOT NULL
+AND t2.$pkColumn IS NULL
+SQL;
+                        } else {
+                            $sql = <<<SQL
+DELETE FROM $table->name t
+WHERE t."$fkColumn" IS NOT NULL
+AND NOT EXISTS (
+    SELECT * FROM $refTable
+    WHERE "$pkColumn" = t."$fkColumn"
+)
+SQL;
+                        }
+
+                        $this->db->createCommand($sql)->execute();
+                    }
+                }
+
+                $counter++;
+            }
+        }
+
+        // Re-enable FK checks
+        if ($disabledFkChecks) {
+            $this->db->createCommand()->checkIntegrity(true)->execute();
+        }
+
+        $this->_stdout("done\n", Console::FG_GREEN);
+    }
+
+    private function _deletePointlessChangeData(): void
+    {
+        $db = Craft::$app->getDb();
+        $schema = $db->getSchema();
+
+        foreach ([Table::CHANGEDATTRIBUTES, Table::CHANGEDFIELDS] as $table) {
+            $this->_stdout(sprintf('    > deleting pointless rows in the %s table ... ', $schema->getRawTableName($table)));
+
+            // fetch any rows in the table for canonical elements that don't have any drafts
+            $query = (new Query())
+                ->select('t.elementId')
+                ->from(['t' => $table])
+                ->innerJoin(['e' => Table::ELEMENTS], '[[e.id]] = [[t.elementId]]')
+                ->leftJoin(['d' => Table::ELEMENTS], [
+                    'and',
+                    ['not', ['d.draftId' => null]],
+                    '[[d.canonicalId]] = [[e.id]]',
+                ])
+                ->where(['e.canonicalId' => null])
+                ->andWhere(['d.id' => null])
+                ->groupBy('t.elementId');
+
+            foreach (Db::batch($query) as $batch) {
+                $elementIds = array_column($batch, 'elementId');
+                Db::delete($table, ['elementId' => $elementIds]);
+            }
+
+            $this->_stdout("done\n", Console::FG_GREEN);
+        }
+    }
+
+    /**
+     * Deletes field layouts that are no longer used.
+     *
+     * @param class-string<ElementInterface> $elementType The element type
+     * @param string $table The  table name that contains a foreign key to `fieldlayouts.id`
+     * @param string $fk The column name that contains the foreign key to `fieldlayouts.id`
+     * @since 5.5.0
+     */
+    public function deleteOrphanedFieldLayouts(string $elementType, string $table, string $fk = 'fieldLayoutId'): void
+    {
+        $this->_stdout(sprintf('    > deleting orphaned %s field layouts ... ', $elementType::lowerDisplayName()));
+
+        $ids = (new Query())
+            ->select('fl.id')
+            ->from(['fl' => Table::FIELDLAYOUTS])
+            ->leftJoin(['t' => $table], "[[t.$fk]] = [[fl.id]]")
+            ->where(['fl.type' => $elementType, "t.$fk" => null])
+            ->column();
+
+        if (!empty($ids)) {
+            Db::delete(Table::FIELDLAYOUTS, ['id' => $ids]);
         }
 
         $this->_stdout("done\n", Console::FG_GREEN);
