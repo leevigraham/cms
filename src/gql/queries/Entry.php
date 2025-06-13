@@ -97,52 +97,45 @@ class Entry extends Query
         $gqlService = Craft::$app->getGql();
 
         foreach (GqlHelper::getSchemaContainedSections() as $section) {
-            $name = "{$section->handle}Entries";
-            $typeName = "{$section->handle}SectionEntriesQuery";
-            $sectionQueryType = GqlEntityRegistry::getEntity($typeName);
+            $entryTypesInSection = [];
 
-            if (!$sectionQueryType) {
-                $entryTypesInSection = [];
-
-                // Loop through the entry types and create further queries
-                foreach ($section->getEntryTypes() as $entryType) {
-                    if (isset($entryTypeGqlTypes[$entryType->id])) {
-                        $entryTypesInSection[] = $entryTypeGqlTypes[$entryType->id];
-                    }
+            // Loop through the entry types and create further queries
+            foreach ($section->getEntryTypes() as $entryType) {
+                if (isset($entryTypeGqlTypes[$entryType->id])) {
+                    $entryTypesInSection[] = $entryTypeGqlTypes[$entryType->id];
                 }
-
-                if (empty($entryTypesInSection)) {
-                    continue;
-                }
-
-                $arguments = EntryArguments::getArguments();
-
-                // Unset unusable arguments
-                unset(
-                    $arguments['section'],
-                    $arguments['sectionId'],
-                    $arguments['field'],
-                    $arguments['fieldId'],
-                    $arguments['ownerId'],
-                );
-
-                foreach ($section->getEntryTypes() as $entryType) {
-                    $arguments += $gqlService->getFieldLayoutArguments($entryType->getFieldLayout());
-                }
-
-                // Create the section query field
-                $sectionQueryType = [
-                    'name' => $name,
-                    'args' => $arguments,
-                    'description' => sprintf('Entries within the “%s” section.', $section->name),
-                    'type' => Type::listOf(GqlHelper::getUnionType("{$section->handle}SectionEntryUnion", $entryTypesInSection)),
-                    // Enforce the section argument and set the source to `null`, to enforce a new element query.
-                    'resolve' => fn($source, array $arguments, $context, ResolveInfo $resolveInfo) =>
-                        EntryResolver::resolve(null, $arguments + ['section' => $section->handle], $context, $resolveInfo),
-                ];
             }
 
-            $gqlTypes[$name] = $sectionQueryType;
+            if (empty($entryTypesInSection)) {
+                continue;
+            }
+
+            $arguments = EntryArguments::getArguments();
+
+            // Unset unusable arguments
+            unset(
+                $arguments['section'],
+                $arguments['sectionId'],
+                $arguments['field'],
+                $arguments['fieldId'],
+                $arguments['ownerId'],
+            );
+
+            foreach ($section->getEntryTypes() as $entryType) {
+                $arguments += $gqlService->getFieldLayoutArguments($entryType->getFieldLayout());
+            }
+
+            // Create the section query field
+            $name = "{$section->handle}Entries";
+            $gqlTypes[$name] = [
+                'name' => $name,
+                'args' => $arguments,
+                'description' => sprintf('Entries within the “%s” section.', $section->name),
+                'type' => Type::listOf(GqlHelper::getUnionType("{$section->handle}SectionEntryUnion", $entryTypesInSection)),
+                // Enforce the section argument and set the source to `null`, to enforce a new element query.
+                'resolve' => fn($source, array $arguments, $context, ResolveInfo $resolveInfo) =>
+                EntryResolver::resolve(null, $arguments + ['section' => $section->handle], $context, $resolveInfo),
+            ];
         }
 
         return $gqlTypes;

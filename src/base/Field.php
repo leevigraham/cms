@@ -470,6 +470,7 @@ abstract class Field extends SavableComponent implements FieldInterface, Iconic,
                 'uri',
                 'url',
                 'viewMode',
+                'where',
             ],
         ];
 

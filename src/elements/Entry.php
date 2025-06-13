@@ -1060,7 +1060,8 @@ class Entry extends Element implements NestedElementInterface, ExpirableElementI
         } catch (InvalidArgumentException) {
             return true;
         }
-        return $titleField->required;
+
+        return $titleField->required && $titleField->showInForm($this);
     }
 
     /**
@@ -1259,6 +1260,10 @@ class Entry extends Element implements NestedElementInterface, ExpirableElementI
         }
 
         $sections = Collection::make(Craft::$app->getEntries()->getEditableSections());
+        $requestedSite = Cp::requestedSite();
+        if ($requestedSite) {
+            $sections = $sections->filter(fn(Section $s) => in_array($requestedSite->id, $s->getSiteIds()));
+        }
         /** @var Collection $sectionOptions */
         $sectionOptions = $sections
             ->filter(fn(Section $s) => $s->type !== Section::TYPE_SINGLE)
@@ -1592,7 +1597,7 @@ class Entry extends Element implements NestedElementInterface, ExpirableElementI
                 if (!$entryType) {
                     // Maybe the section/field no longer allows this type,
                     // so get it directly from the Entries service instead
-                    $entryType = Craft::$app->getEntries()->getEntryTypeById($this->_typeId);
+                    $entryType = Craft::$app->getEntries()->getEntryTypeById($this->_typeId, true);
                     if (!$entryType) {
                         throw new InvalidConfigException("Invalid entry type ID: $this->_typeId");
                     }
@@ -1979,7 +1984,7 @@ class Entry extends Element implements NestedElementInterface, ExpirableElementI
      */
     public function canCopy(User $user): bool
     {
-        return Craft::$app->getElements()->canDuplicate($this, $user);
+        return Craft::$app->getElements()->canView($this, $user);
     }
 
     /**
@@ -2555,6 +2560,7 @@ JS;
     {
         $entryType = $this->getType();
 
+        // Leave the title alone if the layout has a Title field, and it's already set to something
         if ($entryType->hasTitleField && trim($this->title ?? '') !== '') {
             return;
         }

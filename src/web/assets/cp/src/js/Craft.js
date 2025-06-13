@@ -1174,13 +1174,13 @@ $.extend(Craft, {
 
     // Group all the old & new params by namespace
     const groupedOldParams = this._groupParamsByDeltaNames(
-      oldData.split('&'),
+      oldData,
       deltaNames,
       false,
       initialDeltaValues
     );
     const groupedNewParams = this._groupParamsByDeltaNames(
-      newData.split('&'),
+      newData,
       deltaNames,
       true,
       false
@@ -1213,19 +1213,16 @@ $.extend(Craft, {
   },
 
   /**
-   * @param {Object} params
+   * @param {string|Object} params
    * @param {Object} deltaNames
-   * @param {boolean} withRoot
-   * @param {(boolean|Object)} initialValues
+   * @param {boolean} [withRoot]
    * @returns {Object}
-   * @private
    */
-  _groupParamsByDeltaNames: function (
-    params,
-    deltaNames,
-    withRoot,
-    initialValues
-  ) {
+  groupParams: function (params, deltaNames, withRoot = false) {
+    if (typeof params === 'string') {
+      params = params.split('&');
+    }
+
     const grouped = {};
 
     if (withRoot) {
@@ -1260,6 +1257,25 @@ $.extend(Craft, {
         grouped.__root__.push(encodeURIComponentExceptEqualChar(param));
       }
     }
+
+    return grouped;
+  },
+
+  /**
+   * @param {string|Object} params
+   * @param {Object} deltaNames
+   * @param {boolean} withRoot
+   * @param {(boolean|Object)} initialValues
+   * @returns {Object}
+   * @private
+   */
+  _groupParamsByDeltaNames: function (
+    params,
+    deltaNames,
+    withRoot,
+    initialValues
+  ) {
+    const grouped = this.groupParams(params, deltaNames, withRoot);
 
     if (initialValues) {
       const serializeParam = (name, value) => {
@@ -2095,22 +2111,25 @@ $.extend(Craft, {
     $('[data-disclosure-trigger]', $container).disclosureMenu();
 
     /**
-     * Swap any instruction text with info icons
+     * Swap any instruction text with info icons but avoid those with the class
+     * visually-hidden as those have already been swapped
      * This needs to happen before the `infoicon` method
      */
     $(
       '.field.info-icon-instructions > .instructions, #details .meta > .field > .instructions',
       $container
-    ).each(function () {
-      const $instructions = $(this);
-      const $label = $instructions.siblings('.heading').find('label');
-      $('<div/>', {
-        class: 'info',
-        html: $instructions.children().html(),
-      }).appendTo($label);
-      // Keep the original element around in case an aria-describedby attribute is referencing it
-      $instructions.addClass('visually-hidden');
-    });
+    )
+      .not('.visually-hidden')
+      .each(function () {
+        const $instructions = $(this);
+        const $label = $instructions.siblings('.heading').find('label');
+        $('<div/>', {
+          class: 'info',
+          html: $instructions.children().html(),
+        }).appendTo($label);
+        // Keep the original element around in case an aria-describedby attribute is referencing it
+        $instructions.addClass('visually-hidden');
+      });
 
     $('.info', $container).infoicon();
 
@@ -2603,7 +2622,7 @@ $.extend(Craft, {
     const $actions = $(chip).find(
       '> .chip-content > .chip-actions, > .card-titlebar > .card-actions-container > .card-actions'
     );
-    let $actionMenuBtn = $actions.find('.action-btn');
+    let $actionMenuBtn = $actions.find('.action-btn').removeClass('hidden');
 
     if (!$actionMenuBtn.length) {
       // the chip/card doesn't have an action menu yet, so add one

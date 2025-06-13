@@ -108,8 +108,9 @@ class ButtonGroup extends BaseOptionsField implements SortableFieldInterface
 
         foreach ($this->translatedOptions(true, $value, $element) as $option) {
             $selected = $option['value'] === $value;
+            $hasIcon = !empty($option['icon']) || ($option['icon'] ?? null) === '0';
 
-            if ($this->iconsOnly && !empty($option['icon'])) {
+            if ($this->iconsOnly && $hasIcon) {
                 $labelHtml = Html::tag('div', Cp::iconSvg($option['icon']), [
                     'class' => 'cp-icon',
                     'aria' => [
@@ -118,7 +119,7 @@ class ButtonGroup extends BaseOptionsField implements SortableFieldInterface
                 ]);
             } else {
                 $labelHtml = Html::encode($option['label']);
-                if (!empty($option['icon'])) {
+                if ($hasIcon) {
                     $labelHtml = Html::beginTag('div', ['class' => ['flex', 'flex-inline', 'gap-xs']]) .
                         Html::tag('div', Cp::iconSvg($option['icon']), [
                             'class' => 'cp-icon',

@@ -409,7 +409,7 @@ class ProjectConfig extends Component
     }
 
     /**
-     * Saves the modified project confgi state and writes out updated YAML files, if needed.
+     * Saves the modified project config state and writes out updated YAML files, if needed.
      *
      * @since 5.0.0
      */

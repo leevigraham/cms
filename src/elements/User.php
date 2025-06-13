@@ -1145,6 +1145,21 @@ class User extends Element implements IdentityInterface
     }
 
     /**
+     * Returns whether the user has an associated SSO identity.
+     *
+     * @return bool
+     * @since 5.7.8
+     */
+    public function getHasSsoIdentity(): bool
+    {
+        if (Craft::$app->edition->value < CmsEdition::Enterprise->value) {
+            return false;
+        }
+
+        return Craft::$app->getSso()->identityExists($this->id);
+    }
+
+    /**
      * Validates the unverifiedEmail value is unique.
      *
      * @param string $attribute

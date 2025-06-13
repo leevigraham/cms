@@ -425,7 +425,7 @@ JS, [
         $config = [
             'name' => $this->name,
             'handle' => $this->handle,
-            'icon' => $this->icon ?: null,
+            'icon' => $this->icon || $this->icon === '0' ? $this->icon : null,
             'color' => $this->color?->value,
             'hasTitleField' => $this->hasTitleField,
             'titleTranslationMethod' => $this->titleTranslationMethod,

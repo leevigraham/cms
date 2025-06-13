@@ -229,13 +229,13 @@ abstract class Element extends Component implements ElementInterface
      * @event ElementIndexTableAttributeEvent The event that is triggered when preparing an element query for an element index, for each
      * attribute present in the table.
      *
-     * Paired with [[EVENT_REGISTER_TABLE_ATTRIBUTES]] and [[EVENT_SET_TABLE_ATTRIBUTE_HTML]], this allows optimization of queries on element indexes.
+     * Paired with [[EVENT_REGISTER_TABLE_ATTRIBUTES]] and [[EVENT_DEFINE_ATTRIBUTE_HTML]], this allows optimization of queries on element indexes.
      *
      * ```php
      * use craft\base\Element;
      * use craft\elements\Entry;
      * use craft\events\DefineAttributeHtmlEvent;
-     * use craft\events\PrepareElementQueryForTableAttributeEvent;
+     * use craft\events\ElementIndexTableAttributeEvent;
      * use craft\events\RegisterElementTableAttributesEvent;
      * use craft\helpers\Cp;
      * use yii\base\Event;
@@ -251,7 +251,7 @@ abstract class Element extends Component implements ElementInterface
      * Event::on(
      *     Entry::class,
      *     Element::EVENT_PREP_QUERY_FOR_TABLE_ATTRIBUTE,
-     *     function(PrepareElementQueryForTableAttributeEvent $e) {
+     *     function(ElementIndexTableAttributeEvent $e) {
      *         $query = $e->query;
      *         $attr = $e->attribute;
      *
@@ -263,7 +263,7 @@ abstract class Element extends Component implements ElementInterface
      *
      * Event::on(
      *     Entry::class,
-     *     Element::EVENT_SET_TABLE_ATTRIBUTE_HTML,
+     *     Element::EVENT_DEFINE_ATTRIBUTE_HTML,
      *     function(DefineAttributeHtmlEvent $e) {
      *         $attribute = $e->attribute;
      *
@@ -1743,32 +1743,44 @@ abstract class Element extends Component implements ElementInterface
             $fieldHandle = $handle;
         }
 
-        $field = null;
+        // Get all the custom fields by that handle
+        $fields = [];
         foreach (static::fieldLayouts(null) as $fieldLayout) {
             if ($providerHandle === null || $fieldLayout->provider?->getHandle() === $providerHandle) {
                 $layoutField = $fieldLayout->getFieldByHandle($fieldHandle);
                 if ($layoutField) {
-                    $field = $layoutField;
-                    break;
+                    $fields[] = $layoutField;
+                    if ($providerHandle !== null) {
+                        break;
+                    }
                 }
             }
         }
 
-        if ($field instanceof EagerLoadingFieldInterface) {
-            // filter out elements, if field is not part of its layout
-            // https://github.com/craftcms/cms/issues/12539
-            $sourceElements = array_values(
-                array_filter($sourceElements, function($sourceElement) use ($field) {
-                    $layoutField = $sourceElement->getFieldLayout()?->getFieldByHandle($field->handle);
-                    return $layoutField && $layoutField->id === $field->id;
-                })
-            );
+        // If there were any matching fields, find the first one that's actually included in
+        // at least one of the source elements’ field layouts
+        if (!empty($fields)) {
+            foreach ($fields as $field) {
+                if (!$field instanceof EagerLoadingFieldInterface) {
+                    continue;
+                }
 
-            if (empty($sourceElements)) {
-                return false;
+                // filter out elements, if field is not part of its layout
+                // https://github.com/craftcms/cms/issues/12539
+                $fieldSourceElements = array_values(
+                    array_filter($sourceElements, function($sourceElement) use ($field) {
+                        $layoutField = $sourceElement->getFieldLayout()?->getFieldByHandle($field->handle);
+                        return $layoutField && $layoutField->id === $field->id;
+                    })
+                );
+
+                if (!empty($fieldSourceElements)) {
+                    return $field->getEagerLoadingMap($fieldSourceElements);
+                }
             }
 
-            return $field->getEagerLoadingMap($sourceElements);
+            // None of the source elements include any of the matching fields
+            return false;
         }
 
         // Fire a 'defineEagerLoadingMap' event
@@ -3971,8 +3983,8 @@ abstract class Element extends Component implements ElementInterface
             ];
         }
 
-        // Edit
         if ($elementsService->canView($this)) {
+            // Edit
             $editId = sprintf('action-edit-%s', mt_rand());
             $items[] = [
                 'id' => $editId,
@@ -3998,39 +4010,39 @@ JS, [
                     'ownerId' => $this instanceof NestedElementInterface ? $this->getOwnerId() : null,
                 ],
             ]);
-        }
 
-        // Copy
-        if ($elementsService->canCopy($this)) {
-            $copyId = sprintf('action-copy-%s', mt_rand());
-            $items[] = [
-                'id' => $copyId,
-                'color' => Color::Fuchsia,
-                'icon' => 'clone-dashed',
-                'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Copy {type}', [
-                    'type' => static::lowerDisplayName(),
-                ])),
-            ];
+            // Copy
+            if (!$this->getIsRevision() && $elementsService->canCopy($this)) {
+                $copyId = sprintf('action-copy-%s', mt_rand());
+                $items[] = [
+                    'id' => $copyId,
+                    'color' => Color::Fuchsia,
+                    'icon' => 'clone-dashed',
+                    'label' => StringHelper::upperCaseFirst(Craft::t('app', 'Copy {type}', [
+                        'type' => static::lowerDisplayName(),
+                    ])),
+                ];
 
-            $view = Craft::$app->getView();
-            $view->registerJsWithVars(fn($id, $elementInfo) => <<<JS
+                $view = Craft::$app->getView();
+                $view->registerJsWithVars(fn($id, $elementInfo) => <<<JS
 (() => {
   $('#' + $id).on('activate', () => {
     Craft.cp.copyElements([$elementInfo]);
   });
 })();
 JS, [
-                $view->namespaceInputId($copyId),
-                [
-                    'type' => static::class,
-                    'id' => $this->isProvisionalDraft ? $this->getCanonicalId() : $this->id,
-                    'draftId' => $this->isProvisionalDraft ? null : $this->draftId,
-                    'revisionId' => $this->revisionId,
-                    'fieldId' => $this instanceof NestedElementInterface ? $this->getField()?->id : null,
-                    'ownerId' => $this instanceof NestedElementInterface ? $this->getOwnerId() : null,
-                    'siteId' => $this->siteId,
-                ],
-            ]);
+                    $view->namespaceInputId($copyId),
+                    [
+                        'type' => static::class,
+                        'id' => $this->isProvisionalDraft ? $this->getCanonicalId() : $this->id,
+                        'draftId' => $this->isProvisionalDraft ? null : $this->draftId,
+                        'revisionId' => $this->revisionId,
+                        'fieldId' => $this instanceof NestedElementInterface ? $this->getField()?->id : null,
+                        'ownerId' => $this instanceof NestedElementInterface ? $this->getOwnerId() : null,
+                        'siteId' => $this->siteId,
+                    ],
+                ]);
+            }
         }
 
         return $items;

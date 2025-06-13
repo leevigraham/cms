@@ -435,7 +435,7 @@ class ElementSources extends Component
                         } else {
                             // The handle was overridden, so it gets its own table attribute
                             $attributes["fieldInstance:$layoutElement->uid"] = [
-                                'label' => Craft::t('site', $field->name),
+                                'label' => Craft::t('site', $layoutElement->label()),
                             ];
                         }
                     }

@@ -397,7 +397,7 @@ class Cp
             } else {
                 /** @var Chippable&Iconic $component */
                 $icon = $component->getIcon();
-                if ($icon) {
+                if ($icon || $icon === '0') {
                     $html .= Html::tag('div', static::iconSvg($icon), [
                         'class' => array_filter(['thumb', 'cp-icon', $color?->value]),
                     ]);
@@ -631,7 +631,14 @@ $('#' + $id).on('activate', (ev) => {
   } else {
     // focus on the button so that when the slideout is closed, it's returned to the button
     $(ev.currentTarget).focus();
-    Craft.createElementEditor($elementType, $settings);
+
+    const settings = $settings;
+    // if settings have draftId but the replaced card doesn't have the data-draft-id attribute anymore,
+    // remove the draftId from the settings before creating element editor, so the correct element can be retrieved
+    if (settings.draftId && !Garnish.hasAttr($(ev.currentTarget).parents('.card'), 'data-draft-id')) {
+      delete settings.draftId;
+    }
+    Craft.createElementEditor($elementType, settings);
   }
 });
 JS, [
